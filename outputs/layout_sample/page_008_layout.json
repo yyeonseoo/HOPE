@@ -3,76 +3,73 @@
   "image_path": "outputs/pages/page_008.png",
   "page_width": 1009,
   "page_height": 1446,
+  "block_count": 6,
   "blocks": [
     {
       "block_id": "p008_b001",
-      "type": "title_or_header",
+      "type": "formula_box",
       "bbox": [
         255,
         117,
         750,
         191
-      ]
+      ],
+      "ocr_text": "386,700,000,000,000%1 = 386% 7,000% 원 |"
     },
     {
       "block_id": "p008_b002",
-      "type": "title_or_header",
+      "type": "body_text",
       "bbox": [
         90,
         244,
         905,
         390
-      ]
+      ],
+      "ocr_text": "표 <19대 분야별 예산 배분표>와 그림 <분야별 예산 배분>은 정부의 2016년 13대 분야의 구\n체적 예산 규모에 대한 보도 자료를 근거로 작성된 표와 그림이며, 이를 시각적으로 표현한 것이\n다. 이와 같이 다양한 자료에는 단위를 표시한다.\n아래의 예를 보자. 단위를 십진법으로 표시하면 다음과 같다."
     },
     {
       "block_id": "p008_b003",
-      "type": "text",
+      "type": "formula_box",
       "bbox": [
         253,
         460,
         749,
         613
-      ]
+      ],
+      "ocr_text": "3.241 원 = 8,000원\n1254 @1 = 1,250,000%1\n275백만 M1 = 275,000,00081"
     },
     {
       "block_id": "p008_b004",
-      "type": "text",
-      "bbox": [
-        350,
-        475,
-        640,
-        583
-      ]
-    },
-    {
-      "block_id": "p008_b005",
-      "type": "text",
+      "type": "caption_or_legend",
       "bbox": [
         91,
         667,
         326,
         701
-      ]
+      ],
+      "ocr_text": "> 12대 분야별 예산 배분표"
     },
     {
-      "block_id": "p008_b006",
-      "type": "table_or_figure",
+      "block_id": "p008_b005",
+      "type": "table",
       "bbox": [
         87,
         689,
         905,
         1324
-      ]
+      ],
+      "ocr_text": "=.\n(단위: 조 원, %)\nPE) 2015 PAT}\ni bg Bei bs Crag Sue\n(A) (B) (C) 비그 (C-A)/A (C-B)/B\nPeswas [over | 4 | 0 | 00 | 8 | 시 |\n| = | |에|] | | |\nPema fe | fw [ow P|\nee | | | | | 8 |\n| ※ | |적| 쩌| | 제 | 깨|\n[레세세 8 | 때 | 때 | 8 | 8 | 개 |\nPoa [os [oe [oe [er | eo | |\npew [es fs fw [oe | | |\nPeewee [se [ae [we [wr [we |e |\n| 해 [mee [mr [owe [we [oo | 에 |\n자료: 기획재정부"
     },
     {
-      "block_id": "p008_b007",
+      "block_id": "p008_b006",
       "type": "footer",
       "bbox": [
         91,
         1364,
         313,
         1399
-      ]
+      ],
+      "ocr_text": "14 ㅎ* 1 수와 경제생활"
     }
   ]
 }

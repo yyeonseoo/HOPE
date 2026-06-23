@@ -1,0 +1,86 @@
+{
+  "page_id": 16,
+  "image_path": "outputs/pages/page_016.png",
+  "page_width": 1006,
+  "page_height": 1448,
+  "block_count": 7,
+  "blocks": [
+    {
+      "block_id": "p016_b001",
+      "type": "body_text",
+      "bbox": [
+        89,
+        110,
+        905,
+        183
+      ],
+      "ocr_text": "1인당 017『는 소속 국가 사람들의 생활 수준을 비교하는 지표인데, 실질 00#를 인구수로 나\n눈 값으로 계산한다."
+    },
+    {
+      "block_id": "p016_b002",
+      "type": "formula_box",
+      "bbox": [
+        135,
+        267,
+        875,
+        370
+      ],
+      "ocr_text": "Al\nrere cpp = SGP? |"
+    },
+    {
+      "block_id": "p016_b003",
+      "type": "graph_or_figure",
+      "bbox": [
+        104,
+        444,
+        910,
+        682
+      ],
+      "ocr_text": "전체 인구수가 50명인 국가의 올해 실질 (;1)[-가 작년 100에서 150으로 증가하였을 때, 경제 성\n장률과 올해 1인당 (;12[를 각각 구하여라.\nED 4.466은꼬아 00 :, 100 = 50(%)가되고, (인당 매는 봅뷰 = 8이다."
+    },
+    {
+      "block_id": "p016_b004",
+      "type": "reference_text",
+      "bbox": [
+        91,
+        744,
+        906,
+        818
+      ],
+      "ocr_text": "참고로 아래 그림은 우리나라의 1인당 명목 소득과 실질 소득의 변화 추이를 나타내는 그래프\n이다."
+    },
+    {
+      "block_id": "p016_b005",
+      "type": "graph_or_figure",
+      "bbox": [
+        91,
+        887,
+        913,
+        1145
+      ],
+      "ocr_text": "만원\n5000\n…\n2500 we\na seusresstsssnagaseetsesteet\n1965 1960 1965 190 196 1980 H_C 2000 2065 200 205\n(연되\n=: remmpesanee sett wis cit"
+    },
+    {
+      "block_id": "p016_b006",
+      "type": "caption_or_legend",
+      "bbox": [
+        348,
+        1133,
+        721,
+        1167
+      ],
+      "ocr_text": "* 1인당명목소득만원) ㆍ 1인당실질소득만원"
+    },
+    {
+      "block_id": "p016_b007",
+      "type": "footer",
+      "bbox": [
+        93,
+        1369,
+        316,
+        1404
+      ],
+      "ocr_text": "20 ＊ㅇ＊ 1 수와 경제생활"
+    }
+  ]
+}
