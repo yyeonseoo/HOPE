@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 import cv2
 import numpy as np
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_MODEL_CACHE: Dict[str, object] = {}
 
 TARGET_CLASSES = [
     "title",
@@ -33,11 +35,33 @@ def detect_layout(
 ) -> List[Dict]:
     if yolo_model_path:
         try:
-            return _postprocess_blocks(_detect_with_yolo(image_path, yolo_model_path), None, None)
-        except Exception:
-            pass
+            model_blocks = _postprocess_blocks(_detect_with_yolo(image_path, yolo_model_path), None, None)
+            heuristic_blocks = _detect_with_heuristics(image_path, ocr_lines or [])
+            return _merge_and_filter(_supplement_model_blocks(model_blocks, heuristic_blocks))
+        except Exception as exc:
+            if str(yolo_model_path).startswith("hf:"):
+                raise RuntimeError(f"Layout model inference failed: {exc}") from exc
 
     return _detect_with_heuristics(image_path, ocr_lines or [])
+
+
+def _supplement_model_blocks(model_blocks: List[Dict], heuristic_blocks: List[Dict]) -> List[Dict]:
+    supplemented = list(model_blocks)
+    useful_supplement_types = {"formula", "caption", "footer", "page_number", "section_title"}
+    for block in heuristic_blocks:
+        if block["type"] not in useful_supplement_types:
+            continue
+        if _is_overlapping_any(block["bbox"], supplemented, threshold=0.45):
+            continue
+        block = dict(block)
+        block["detector"] = block.get("detector", "heuristic_supplement")
+        block["score"] = min(float(block.get("score", 0.35)), 0.50)
+        supplemented.append(block)
+    return supplemented
+
+
+def _is_overlapping_any(bbox: List[int], blocks: List[Dict], threshold: float) -> bool:
+    return any(_intersection_over_area(bbox, block["bbox"]) >= threshold for block in blocks)
 
 
 def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] = None) -> List[Dict]:
@@ -47,9 +71,13 @@ def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] 
 
 
 def _detect_with_yolo(image_path: str | Path, model_path: str | Path) -> List[Dict]:
+    model_ref = str(model_path)
+    if model_ref.startswith("hf:"):
+        return _detect_with_doclayout_yolo(image_path, model_ref[3:])
+
     from ultralytics import YOLO
 
-    model = YOLO(str(model_path))
+    model = YOLO(model_ref)
     result = model(str(image_path), verbose=False)[0]
     names = result.names
     blocks: List[Dict] = []
@@ -66,20 +94,97 @@ def _detect_with_yolo(image_path: str | Path, model_path: str | Path) -> List[Di
     return blocks
 
 
+def _detect_with_doclayout_yolo(image_path: str | Path, repo_id: str) -> List[Dict]:
+    cache_key = f"doclayout-yolo:{repo_id}"
+    if cache_key not in _MODEL_CACHE:
+        _MODEL_CACHE[cache_key] = _load_doclayout_yolo_model(repo_id)
+
+    model = _MODEL_CACHE[cache_key]
+    result = model.predict(
+        str(image_path),
+        imgsz=1024,
+        conf=0.20,
+        device="cpu",
+        verbose=False,
+    )[0]
+    names = result.names
+    blocks: List[Dict] = []
+    for box in result.boxes:
+        cls_id = int(box.cls[0])
+        label = _map_external_label(names.get(cls_id, str(cls_id)))
+        blocks.append(
+            {
+                "type": label,
+                "bbox": [int(v) for v in box.xyxy[0].tolist()],
+                "score": float(box.conf[0]),
+                "detector": "doclayout_yolo",
+            }
+        )
+    return blocks
+
+
+def _load_doclayout_yolo_model(repo_id: str):
+    import os
+
+    cache_dir = PROJECT_ROOT / ".cache" / "huggingface"
+    matplotlib_cache_dir = PROJECT_ROOT / ".cache" / "matplotlib"
+    yolo_config_dir = PROJECT_ROOT / ".cache" / "ultralytics"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    matplotlib_cache_dir.mkdir(parents=True, exist_ok=True)
+    yolo_config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(cache_dir))
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache_dir))
+    os.environ.setdefault("YOLO_CONFIG_DIR", str(yolo_config_dir))
+
+    try:
+        from doclayout_yolo import YOLOv10
+    except ImportError as exc:
+        raise RuntimeError("DocLayout-YOLO is not installed. Run: pip install doclayout-yolo huggingface_hub") from exc
+
+    try:
+        return YOLOv10.from_pretrained(repo_id)
+    except Exception:
+        from huggingface_hub import hf_hub_download
+
+        filepath = hf_hub_download(
+            repo_id=repo_id,
+            filename="doclayout_yolo_docstructbench_imgsz1024.pt",
+            cache_dir=cache_dir,
+        )
+        return YOLOv10(filepath)
+
+
 def _map_external_label(label: str) -> str:
     normalized = label.lower().replace(" ", "_").replace("-", "_")
     aliases = {
         "text": "paragraph",
         "plain_text": "paragraph",
+        "plain_text_region": "paragraph",
+        "text_region": "paragraph",
+        "body": "paragraph",
+        "body_text": "paragraph",
         "header": "title",
+        "heading": "section_title",
+        "section": "section_title",
+        "section_header": "section_title",
         "figure": "figure",
         "picture": "figure",
         "image": "figure",
         "graph": "figure",
+        "graph_or_figure": "figure",
         "equation": "formula",
+        "isolate_formula": "formula",
+        "isolated_formula": "formula",
+        "formula": "formula",
         "formula_box": "formula",
         "table_caption": "caption",
         "figure_caption": "caption",
+        "formula_caption": "caption",
+        "caption_or_legend": "caption",
+        "table_footnote": "caption",
+        "abandon": "footer",
+        "page_footer": "footer",
         "example_box": "paragraph",
         "problem_box": "paragraph",
         "solution_box": "paragraph",
@@ -368,12 +473,16 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
         compact = text.replace(" ", "")
         if _looks_like_header_box(text):
             block["type"] = "section_title"
+        elif block["type"] in {"title", "section_title"} and _looks_like_formula(text):
+            block["type"] = "formula"
         elif block["type"] in {"title", "section_title", "formula"} and _looks_like_long_sentence(text):
             block["type"] = "paragraph"
         elif block["type"] == "formula" and (_looks_like_unit_note(text) or _looks_like_sentence_with_math(text)):
             block["type"] = "caption" if _looks_like_unit_note(text) else "paragraph"
         elif block["type"] == "formula" and _looks_like_unit_note(text):
             block["type"] = "caption"
+        elif block["type"] == "paragraph" and _looks_like_formula(text) and not _looks_like_long_sentence(text):
+            block["type"] = "formula"
         elif block["type"] in {"formula", "paragraph"} and _looks_like_table_text(text):
             block["type"] = "table"
         elif block["type"] in {"caption", "figure", "image", "example_box"} and _looks_like_paragraph_text(text):

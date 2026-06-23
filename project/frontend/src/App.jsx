@@ -23,6 +23,7 @@ export default function App() {
   const [pageCount, setPageCount] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [dpi, setDpi] = useState(120);
+  const [layoutModel, setLayoutModel] = useState("heuristic");
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -78,6 +79,7 @@ export default function App() {
     formData.append("page_number", String(pageNumber));
     formData.append("dpi", String(dpi));
     formData.append("lang", "korean");
+    formData.append("layout_model", layoutModel);
 
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, {
@@ -151,6 +153,14 @@ export default function App() {
               />
             </label>
           </div>
+
+          <label className="model-field">
+            Layout model
+            <select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}>
+              <option value="heuristic">Heuristic fallback</option>
+              <option value="doclayout_yolo">DocLayout-YOLO</option>
+            </select>
+          </label>
 
           <div className="page-count">
             <span>전체 페이지</span>

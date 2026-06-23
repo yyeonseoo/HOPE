@@ -24,7 +24,12 @@ app = FastAPI(title="Textbook Layout Parser API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,6 +88,7 @@ async def analyze_page(
     page_number: int = Form(...),
     dpi: int = Form(120),
     lang: str = Form("korean"),
+    layout_model: str = Form("heuristic"),
     yolo_model_path: Optional[str] = Form(None),
 ):
     with tempfile.TemporaryDirectory(prefix="textbook_layout_") as tmp:
@@ -96,12 +102,15 @@ async def analyze_page(
             pdf_text_lines = extract_pdf_text_lines(pdf_path, page_number, dpi=dpi)
             prefer_pdf_text = len(pdf_text_lines) >= 3
             ocr_engine = None if prefer_pdf_text else _get_ocr_engine(lang)
+            selected_model_path = yolo_model_path.strip() if yolo_model_path else None
+            if layout_model == "doclayout_yolo":
+                selected_model_path = "hf:juliozhao/DocLayout-YOLO-DocStructBench"
             result = process_single_page(
                 pdf_path=pdf_path,
                 page_number=page_number,
                 work_dir=tmp_dir / "results",
                 dpi=dpi,
-                yolo_model_path=yolo_model_path.strip() if yolo_model_path else None,
+                yolo_model_path=selected_model_path,
                 lang=lang,
                 ocr_engine=ocr_engine,
                 prefer_pdf_text=prefer_pdf_text,
