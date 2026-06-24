@@ -37,7 +37,9 @@ def detect_layout(
         try:
             model_blocks = _postprocess_blocks(_detect_with_yolo(image_path, yolo_model_path), None, None)
             heuristic_blocks = _detect_with_heuristics(image_path, ocr_lines or [])
-            return _merge_and_filter(_supplement_model_blocks(model_blocks, heuristic_blocks))
+            supplemented = _supplement_model_blocks(model_blocks, heuristic_blocks)
+            supplemented = _supplement_uncovered_ocr_text(image_path, ocr_lines or [], supplemented)
+            return _merge_and_filter(supplemented)
         except Exception as exc:
             if str(yolo_model_path).startswith("hf:"):
                 raise RuntimeError(f"Layout model inference failed: {exc}") from exc
@@ -62,6 +64,270 @@ def _supplement_model_blocks(model_blocks: List[Dict], heuristic_blocks: List[Di
 
 def _is_overlapping_any(bbox: List[int], blocks: List[Dict], threshold: float) -> bool:
     return any(_intersection_over_area(bbox, block["bbox"]) >= threshold for block in blocks)
+
+
+def _supplement_uncovered_ocr_text(image_path: str | Path, ocr_lines: List[Dict], blocks: List[Dict]) -> List[Dict]:
+    if not ocr_lines:
+        return blocks
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return blocks
+    height, width = image.shape[:2]
+
+    result = list(blocks)
+    result = _supplement_role_title_regions(ocr_lines, result, width, height, image)
+
+    supplemental = _classify_text_regions(ocr_lines, width, height, result)
+    for block in supplemental:
+        if block["type"] not in {"paragraph", "formula", "caption", "section_title"}:
+            continue
+        if _is_noise_text(block.get("text", "")):
+            continue
+        if _is_overlapping_any(block["bbox"], result, threshold=0.35):
+            continue
+        block = dict(block)
+        block["detector"] = "ocr_text_supplement"
+        block["score"] = min(float(block.get("score", 0.35)), 0.50)
+        result.append(block)
+    return _merge_ocr_supplement_paragraphs(result)
+
+
+def _supplement_role_title_regions(
+    ocr_lines: List[Dict], blocks: List[Dict], page_width: int, page_height: int, image: Optional[np.ndarray] = None
+) -> List[Dict]:
+    result = list(blocks)
+    role_titles = []
+    for block in blocks:
+        if block["type"] not in {"title", "section_title"}:
+            continue
+        if _area(block["bbox"]) >= page_width * page_height * 0.01:
+            continue
+        role_hint = _role_hint_for_title_block(block, ocr_lines)
+        if role_hint in {"example", "solution", "problem"}:
+            title_block = dict(block)
+            title_block["_role_hint"] = role_hint
+            role_titles.append(title_block)
+
+    for title in role_titles:
+        title_bbox = title["bbox"]
+        role_hint = title["_role_hint"]
+        next_y = min(
+            [
+                block["bbox"][1]
+                for block in blocks
+                if block is not title
+                and block["bbox"][1] > title_bbox[3] + 20
+                and block["type"] in {"paragraph", "figure", "table", "footer"}
+            ]
+            or [page_height],
+        )
+        y1 = max(0, title_bbox[1] - 32)
+        y2 = min(page_height, next_y - 6, title_bbox[3] + 175)
+
+        region_lines = []
+        for line in ocr_lines:
+            lx1, ly1, lx2, ly2 = line["bbox"]
+            if ly2 < y1 or ly1 > y2:
+                continue
+            if lx2 < max(0, title_bbox[0] - 30) or lx1 > min(page_width, title_bbox[2] + page_width * 0.78):
+                continue
+            is_title_line = _intersection_over_area(line["bbox"], title_bbox) >= 0.15
+            if _is_noise_text(line.get("text", "")) and not is_title_line and not _is_math_fragment(line.get("text", "")):
+                continue
+            region_lines.append(line)
+
+        if len(region_lines) < 2 and not (
+            role_hint == "solution" and region_lines and len(region_lines[0].get("text", "").replace(" ", "")) >= 20
+        ):
+            continue
+
+        bbox = [
+            min(line["bbox"][0] for line in region_lines),
+            min(line["bbox"][1] for line in region_lines),
+            max(line["bbox"][2] for line in region_lines),
+            max(line["bbox"][3] for line in region_lines),
+        ]
+        bbox = _expand_role_bbox_with_visual_lines(image, bbox, title_bbox, y1, y2)
+        if _is_overlapping_any(bbox, [block for block in result if block["type"] == "paragraph"], threshold=0.70):
+            continue
+
+        text = "\n".join(line.get("text", "") for line in _sort_ocr_lines_for_text(region_lines))
+        block_type = "formula" if _looks_like_role_formula_region(text) else "paragraph"
+        result.append(
+            {
+                "type": block_type,
+                "bbox": bbox,
+                "text": text,
+                "score": 0.72,
+                "detector": "role_region_supplement",
+                "context": {"role_hint": role_hint},
+            }
+        )
+    return result
+
+
+def _expand_role_bbox_with_visual_lines(
+    image: Optional[np.ndarray], bbox: List[int], title_bbox: List[int], y1: int, y2: int
+) -> List[int]:
+    if image is None:
+        return bbox
+
+    height, width = image.shape[:2]
+    scan_y1 = max(0, y1 - 16)
+    scan_y2 = min(height, y2 + 16)
+    if scan_y2 <= scan_y1:
+        return bbox
+
+    gray = cv2.cvtColor(image[scan_y1:scan_y2], cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 210, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 1))
+    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    row_counts = np.count_nonzero(horizontal, axis=1)
+    candidate_rows = np.where(row_counts > max(40, width * 0.20))[0]
+    if candidate_rows.size == 0:
+        return bbox
+
+    x_values: List[int] = []
+    y_values: List[int] = []
+    for row in candidate_rows:
+        absolute_y = scan_y1 + int(row)
+        if absolute_y < title_bbox[1] - 45 or absolute_y > y2 + 8:
+            continue
+        xs = np.where(horizontal[row] > 0)[0]
+        if xs.size == 0:
+            continue
+        if xs.max() < title_bbox[0] or xs.min() > bbox[2] + 80:
+            continue
+        x_values.extend([int(xs.min()), int(xs.max())])
+        y_values.append(absolute_y)
+
+    if not x_values:
+        return bbox
+
+    line_x1 = min(x_values)
+    line_x2 = max(x_values)
+    expanded_width = line_x2 - line_x1
+    if expanded_width < (bbox[2] - bbox[0]) * 0.8:
+        return bbox
+
+    return [
+        min(bbox[0], line_x1),
+        min(bbox[1], min(y_values)),
+        max(bbox[2], line_x2),
+        max(bbox[3], max(y_values)),
+    ]
+
+
+def _sort_ocr_lines_for_text(lines: List[Dict]) -> List[Dict]:
+    rows: List[List[Dict]] = []
+    for line in sorted(lines, key=lambda item: ((item["bbox"][1] + item["bbox"][3]) / 2, item["bbox"][0])):
+        cy = (line["bbox"][1] + line["bbox"][3]) / 2
+        if rows:
+            row_cy = sum((item["bbox"][1] + item["bbox"][3]) / 2 for item in rows[-1]) / len(rows[-1])
+            if abs(cy - row_cy) <= 18:
+                rows[-1].append(line)
+                continue
+        rows.append([line])
+
+    ordered: List[Dict] = []
+    for row in rows:
+        ordered.extend(sorted(row, key=lambda item: item["bbox"][0]))
+    return ordered
+
+
+def _is_math_fragment(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if not compact:
+        return False
+    return any(char.isdigit() for char in compact) and any(char in compact for char in "0123456789=+-–×÷/%().")
+
+
+def _looks_like_role_formula_region(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    compact = "".join(lines)
+    content = compact.replace("풀이", "").replace("해설", "").replace("정답", "")
+    if not content:
+        return False
+    korean_count = sum("\uac00" <= char <= "\ud7a3" for char in content)
+    math_chars = sum(char in "=+-−–×÷/%()[]{}^∆Δ√∑" for char in content)
+    digit_count = sum(char.isdigit() for char in content)
+    formula_lines = sum(_looks_like_formula(line) or _is_math_fragment(line) for line in lines)
+    sentence_like = korean_count >= 8 or any(marker in content for marker in ["이고", "이며", "한다", "된다", "구하여라"])
+    return not sentence_like and (formula_lines >= 3 or (math_chars >= 5 and digit_count >= 2))
+
+
+def _role_hint_for_title_block(block: Dict, ocr_lines: List[Dict]) -> str:
+    context_role = (block.get("context") or {}).get("role_hint")
+    if context_role in {"example", "solution", "problem"}:
+        return context_role
+
+    texts = []
+    x1, y1, x2, y2 = block["bbox"]
+    expanded = [x1 - 18, y1 - 18, x2 + 55, y2 + 18]
+    for line in ocr_lines:
+        if _intersection_over_area(line["bbox"], expanded) > 0:
+            texts.append(line.get("text", ""))
+    inferred = _infer_role("\n".join(texts) or block.get("text", ""))
+    return inferred
+
+
+def _merge_ocr_supplement_paragraphs(blocks: List[Dict]) -> List[Dict]:
+    merged: List[Dict] = []
+    buffer: List[Dict] = []
+
+    def flush_buffer():
+        if not buffer:
+            return
+        if len(buffer) == 1:
+            merged.append(buffer[0])
+        else:
+            x1 = min(item["bbox"][0] for item in buffer)
+            y1 = min(item["bbox"][1] for item in buffer)
+            x2 = max(item["bbox"][2] for item in buffer)
+            y2 = max(item["bbox"][3] for item in buffer)
+            text = "\n".join(item.get("text", "") for item in buffer).strip()
+            merged.append(
+                {
+                    "type": "paragraph",
+                    "bbox": [x1, y1, x2, y2],
+                    "text": text,
+                    "score": 0.50,
+                    "detector": "ocr_text_supplement",
+                }
+            )
+        buffer.clear()
+
+    for block in sorted(blocks, key=lambda item: (item["bbox"][1], item["bbox"][0])):
+        is_supplement_paragraph = block.get("detector") == "ocr_text_supplement" and block["type"] == "paragraph"
+        if not is_supplement_paragraph:
+            flush_buffer()
+            merged.append(block)
+            continue
+        if not buffer:
+            buffer.append(block)
+            continue
+        prev = buffer[-1]
+        gap = block["bbox"][1] - prev["bbox"][3]
+        horizontal_overlap = min(block["bbox"][2], prev["bbox"][2]) - max(block["bbox"][0], prev["bbox"][0])
+        min_width = max(1, min(block["bbox"][2] - block["bbox"][0], prev["bbox"][2] - prev["bbox"][0]))
+        same_text_region = horizontal_overlap / min_width >= 0.35 or abs(block["bbox"][0] - prev["bbox"][0]) < 110
+        if gap < 42 and same_text_region:
+            buffer.append(block)
+        else:
+            flush_buffer()
+            buffer.append(block)
+    flush_buffer()
+    return merged
+
+
+def _is_noise_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if len(compact) < 4:
+        return True
+    informative = sum(char.isalnum() or "\uac00" <= char <= "\ud7a3" for char in compact)
+    return informative / max(len(compact), 1) < 0.45
 
 
 def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] = None) -> List[Dict]:
@@ -365,10 +631,28 @@ def _looks_like_formula(text: str) -> bool:
         return False
     if _looks_like_sentence_with_math(text):
         return False
-    formula_chars = ["=", "+", "-", "×", "÷", "∑", "√", "≤", "≥", "(", ")", "^", "lim", "log"]
+    formula_chars = ["=", "+", "-", "−", "–", "×", "÷", "∑", "√", "≤", "≥", "(", ")", "^", "lim", "log", "∆", "Δ"]
     math_hits = sum(1 for char in formula_chars if char in text)
     digit_ratio = sum(ch.isdigit() for ch in text) / max(len(text), 1)
     return math_hits >= 2 or (math_hits >= 1 and digit_ratio > 0.20)
+
+
+def _looks_like_formula_block(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    compact = "".join(lines)
+    if not compact:
+        return False
+    if _looks_like_long_sentence(text):
+        return False
+    math_chars = sum(char in "=+-−–×÷/%()[]{}^∆Δ√∑" for char in compact)
+    alpha_math = sum(token in compact for token in ["f(", "lim", "log", "sin", "cos", "tan"])
+    korean_count = sum("\uac00" <= char <= "\ud7a3" for char in compact)
+    table_words = any(keyword in compact for keyword in ["연도", "예산", "비중", "증감", "국가", "구분", "합계", "총지출"])
+    if korean_count >= 8 and len(lines) <= 3:
+        return False
+    fraction_like = len(lines) >= 3 and math_chars >= 3 and korean_count <= 6
+    equation_like = "=" in compact and math_chars >= 4 and korean_count <= 6
+    return not table_words and (fraction_like or equation_like)
 
 
 def _looks_like_long_sentence(text: str) -> bool:
@@ -401,6 +685,8 @@ def _looks_like_paragraph_text(text: str) -> bool:
 def _looks_like_table_text(text: str) -> bool:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) < 5:
+        return False
+    if _looks_like_formula_block(text):
         return False
     numeric_lines = sum(any(char.isdigit() for char in line) for line in lines)
     has_table_header = any(keyword in text for keyword in ["연도", "예산", "비중", "증감", "국가", "구분", "합계", "총"])
@@ -467,12 +753,21 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
     processed = []
     for block in blocks:
         text = block.get("text", "")
+        if block.get("detector") == "role_region_supplement":
+            block["type"] = "formula" if _looks_like_role_formula_region(text) else "paragraph"
+            role = _infer_role(text)
+            if role != "normal":
+                block["role"] = role
+            processed.append(block)
+            continue
         role = _infer_role(text)
         if role != "normal":
             block["role"] = role
         compact = text.replace(" ", "")
         if _looks_like_header_box(text):
             block["type"] = "section_title"
+        elif block["type"] in {"table", "paragraph", "formula"} and _looks_like_formula_block(text):
+            block["type"] = "formula"
         elif block["type"] in {"title", "section_title"} and _looks_like_formula(text):
             block["type"] = "formula"
         elif block["type"] in {"title", "section_title", "formula"} and _looks_like_long_sentence(text):
@@ -505,6 +800,9 @@ def _infer_role(text: str) -> str:
 def _split_mixed_role_blocks(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
     split_blocks: List[Dict] = []
     for block in blocks:
+        if block.get("detector") == "role_region_supplement":
+            split_blocks.append(block)
+            continue
         role = block.get("role")
         if role not in {"example", "problem", "solution"}:
             split_blocks.append(block)
@@ -628,6 +926,8 @@ def _block_from_lines(
 
 
 def _classify_content_text(text: str) -> str:
+    if _looks_like_formula_block(text):
+        return "formula"
     if _looks_like_table_text(text):
         return "table"
     if _looks_like_formula(text):
@@ -747,6 +1047,13 @@ def _merge_and_filter(blocks: List[Dict]) -> List[Dict]:
         replaced = False
         for index, kept in enumerate(result):
             overlap = _iou(block["bbox"], kept["bbox"])
+            if _should_drop_nested_block(block, kept):
+                duplicate = True
+                break
+            if _should_drop_nested_block(kept, block):
+                result[index] = block
+                replaced = True
+                break
             if overlap > 0.80 or _mostly_inside(block["bbox"], kept["bbox"]) or _mostly_inside(kept["bbox"], block["bbox"]):
                 if _prefer_block(block, kept):
                     result[index] = block
@@ -759,7 +1066,27 @@ def _merge_and_filter(blocks: List[Dict]) -> List[Dict]:
     return result
 
 
+def _should_drop_nested_block(inner: Dict, outer: Dict) -> bool:
+    if outer["type"] != "paragraph":
+        return False
+    if inner["type"] not in {"title", "section_title", "formula", "caption"}:
+        return False
+    if not _mostly_inside(inner["bbox"], outer["bbox"], threshold=0.62):
+        return False
+
+    area_ratio = _area(inner["bbox"]) / max(_area(outer["bbox"]), 1)
+    outer_text = outer.get("text", "")
+    role_hint = (outer.get("context") or {}).get("role_hint")
+    mixed_explanation = len(outer_text.replace(" ", "")) >= 25 or role_hint in {"example", "solution", "problem"}
+    return mixed_explanation and area_ratio < 0.55
+
+
 def _prefer_block(candidate: Dict, current: Dict) -> bool:
+    if _is_role_region_paragraph(candidate) and current["type"] in {"title", "section_title", "formula", "caption"}:
+        return True
+    if _is_role_region_paragraph(current) and candidate["type"] in {"title", "section_title", "formula", "caption"}:
+        return False
+
     candidate_type = _resolve_overlap_type(candidate, current)
     current_type = _resolve_overlap_type(current, candidate)
     if candidate_type != candidate["type"] and current_type == current["type"]:
@@ -769,6 +1096,10 @@ def _prefer_block(candidate: Dict, current: Dict) -> bool:
     return _type_priority(candidate_type) + float(candidate.get("score", 0.0)) > _type_priority(
         current_type
     ) + float(current.get("score", 0.0))
+
+
+def _is_role_region_paragraph(block: Dict) -> bool:
+    return block.get("detector") == "role_region_supplement" and block.get("type") == "paragraph"
 
 
 def _resolve_overlap_type(block: Dict, other: Dict) -> str:

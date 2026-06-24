@@ -115,6 +115,8 @@ def ocr_blocks(
         if block["type"] not in text_types:
             block.setdefault("text", "")
             continue
+        if block.get("detector") == "role_region_supplement" and block.get("text"):
+            continue
         block["text"] = lines_text_inside_bbox(ocr_lines, block["bbox"])
     return blocks
 
