@@ -330,10 +330,136 @@ def _is_noise_text(text: str) -> bool:
     return informative / max(len(compact), 1) < 0.45
 
 
+def _expand_paragraphs_with_nearby_ocr_lines(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    if not ocr_lines:
+        return blocks
+
+    result: List[Dict] = []
+    used_line_ids = set()
+    for block in sorted(blocks, key=lambda item: (item["bbox"][1], item["bbox"][0])):
+        if block["type"] != "paragraph":
+            result.append(block)
+            continue
+        if _starts_with_numbered_item(block.get("text", "")):
+            result.append(block)
+            continue
+
+        bx1, by1, bx2, by2 = block["bbox"]
+        nearby = []
+        for index, line in enumerate(ocr_lines):
+            if index in used_line_ids:
+                continue
+            lx1, ly1, lx2, ly2 = line["bbox"]
+            if ly2 > by1 + 6:
+                continue
+            vertical_gap = by1 - ly2
+            if not (0 <= vertical_gap <= 38):
+                continue
+            horizontal_overlap = min(bx2, lx2) - max(bx1, lx1)
+            line_width = max(1, lx2 - lx1)
+            same_text_flow = horizontal_overlap / line_width >= 0.25 or abs(lx1 - bx1) <= 90
+            if not same_text_flow:
+                continue
+            text = line.get("text", "")
+            if _is_noise_text(text) or _looks_like_axis_or_legend_text(text):
+                continue
+            if any(
+                other is not block
+                and other["type"] == "paragraph"
+                and _inside(line["bbox"], other["bbox"])
+                for other in blocks
+            ):
+                continue
+            if any(other["type"] == "paragraph" and _inside(line["bbox"], other["bbox"]) for other in result):
+                continue
+            if _is_overlapping_any(line["bbox"], [other for other in blocks if other is not block and other["type"] in {"figure", "formula", "table"}], threshold=0.20):
+                continue
+            nearby.append((index, line))
+
+        if not nearby:
+            result.append(block)
+            continue
+
+        lines = [line for _, line in sorted(nearby, key=lambda item: (item[1]["bbox"][1], item[1]["bbox"][0]))]
+        for index, _ in nearby:
+            used_line_ids.add(index)
+        merged_lines = lines + [{"bbox": block["bbox"], "text": block.get("text", "")}]
+        block = dict(block)
+        block["bbox"] = [
+            min(item["bbox"][0] for item in merged_lines),
+            min(item["bbox"][1] for item in merged_lines),
+            max(item["bbox"][2] for item in merged_lines),
+            max(item["bbox"][3] for item in merged_lines),
+        ]
+        prefix = "\n".join(line.get("text", "") for line in lines).strip()
+        block["text"] = "\n".join(part for part in [prefix, block.get("text", "")] if part).strip()
+        result.append(block)
+    return result
+
+
+def _looks_like_axis_or_legend_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if len(compact) <= 2 and any(char.isdigit() for char in compact):
+        return True
+    return compact.startswith(("y=", "x=", "+y=", "-y=")) and len(compact) <= 18
+
+
+def _starts_with_numbered_item(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith(("(", "（")) and len(stripped) >= 2 and stripped[1:2].isdigit()
+
+
+def _supplement_missing_paragraph_lines(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    if not ocr_lines:
+        return blocks
+
+    result = list(blocks)
+    for line in ocr_lines:
+        text = line.get("text", "").strip()
+        if _is_noise_text(text) or _looks_like_axis_or_legend_text(text):
+            continue
+        if _covered_by_existing_relaxed(line["bbox"], result):
+            continue
+        if not _looks_like_recoverable_paragraph_line(text):
+            continue
+        result.append(
+            {
+                "type": "paragraph",
+                "bbox": line["bbox"],
+                "text": text,
+                "score": min(float(line.get("score", 0.45)), 0.55),
+                "detector": "ocr_paragraph_recovery",
+            }
+        )
+    return _merge_and_filter(result)
+
+
+def _covered_by_existing_relaxed(bbox: List[int], blocks: List[Dict]) -> bool:
+    for block in blocks:
+        overlap = _intersection_over_area(bbox, block["bbox"])
+        if overlap >= 0.55 or _inside(bbox, block["bbox"]):
+            return True
+    return False
+
+
+def _looks_like_recoverable_paragraph_line(text: str) -> bool:
+    compact = text.replace(" ", "")
+    if len(compact) < 18:
+        return False
+    if _looks_like_choice_or_answer_list(text) or _looks_like_formula_block(text):
+        return False
+    korean_count = sum("\uac00" <= char <= "\ud7a3" for char in compact)
+    sentence_marker = any(marker in compact for marker in ["에서", "대한", "때", "하면", "이다", "한다", "있다", "은", "는", "을", "를"])
+    return korean_count >= 8 and sentence_marker
+
+
 def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] = None) -> List[Dict]:
     processed = _postprocess_blocks(blocks, None, None)
+    processed = _expand_paragraphs_with_nearby_ocr_lines(processed, ocr_lines or [])
+    processed = _supplement_missing_paragraph_lines(processed, ocr_lines or [])
     split = _split_mixed_role_blocks(processed, ocr_lines or [])
-    return _normalize_content_blocks(_postprocess_blocks(split, None, None))
+    normalized = _normalize_content_blocks(_postprocess_blocks(split, None, None))
+    return _supplement_missing_paragraph_lines(normalized, ocr_lines or [])
 
 
 def _detect_with_yolo(image_path: str | Path, model_path: str | Path) -> List[Dict]:
@@ -627,6 +753,8 @@ def _looks_like_unit_note(text: str) -> bool:
 
 
 def _looks_like_formula(text: str) -> bool:
+    if _looks_like_choice_or_answer_list(text):
+        return False
     if _looks_like_unit_note(text):
         return False
     if _looks_like_sentence_with_math(text):
@@ -638,6 +766,8 @@ def _looks_like_formula(text: str) -> bool:
 
 
 def _looks_like_formula_block(text: str) -> bool:
+    if _looks_like_choice_or_answer_list(text):
+        return False
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     compact = "".join(lines)
     if not compact:
@@ -653,6 +783,21 @@ def _looks_like_formula_block(text: str) -> bool:
     fraction_like = len(lines) >= 3 and math_chars >= 3 and korean_count <= 6
     equation_like = "=" in compact and math_chars >= 4 and korean_count <= 6
     return not table_words and (fraction_like or equation_like)
+
+
+def _looks_like_choice_or_answer_list(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    numbered = sum(line.startswith(("(", "（")) and len(line) <= 30 for line in lines)
+    compact = "".join(lines)
+    korean_count = sum("\uac00" <= char <= "\ud7a3" for char in compact)
+    has_equal = "=" in compact
+    if numbered >= 2 and not has_equal:
+        return True
+    if numbered >= 1 and korean_count >= 3 and not has_equal:
+        return True
+    return False
 
 
 def _looks_like_long_sentence(text: str) -> bool:
@@ -764,7 +909,9 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
         if role != "normal":
             block["role"] = role
         compact = text.replace(" ", "")
-        if _looks_like_header_box(text):
+        if _looks_like_choice_or_answer_list(text):
+            block["type"] = "paragraph"
+        elif _looks_like_header_box(text):
             block["type"] = "section_title"
         elif block["type"] in {"table", "paragraph", "formula"} and _looks_like_formula_block(text):
             block["type"] = "formula"
@@ -926,6 +1073,8 @@ def _block_from_lines(
 
 
 def _classify_content_text(text: str) -> str:
+    if _looks_like_choice_or_answer_list(text):
+        return "paragraph"
     if _looks_like_formula_block(text):
         return "formula"
     if _looks_like_table_text(text):
