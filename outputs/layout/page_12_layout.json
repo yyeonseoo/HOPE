@@ -1,0 +1,241 @@
+{
+  "page_id": 12,
+  "image_size": {
+    "width": 1405,
+    "height": 2012
+  },
+  "element_count": 11,
+  "elements": [
+    {
+      "id": "p12_e1",
+      "type": "picture",
+      "bbox_px": [
+        136,
+        167,
+        1219,
+        569
+      ],
+      "bbox_norm": [
+        0.0965,
+        0.0832,
+        0.8675,
+        0.2829
+      ],
+      "confidence": 0.951,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 1
+    },
+    {
+      "id": "p12_e2",
+      "type": "text",
+      "bbox_px": [
+        148,
+        612,
+        1220,
+        691
+      ],
+      "bbox_norm": [
+        0.1056,
+        0.3044,
+        0.8686,
+        0.3436
+      ],
+      "confidence": 1.0,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 2
+    },
+    {
+      "id": "p12_e3",
+      "type": "text",
+      "bbox_px": [
+        149,
+        714,
+        1217,
+        794
+      ],
+      "bbox_norm": [
+        0.1063,
+        0.3549,
+        0.8661,
+        0.3947
+      ],
+      "confidence": 1.0,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 3
+    },
+    {
+      "id": "p12_e4",
+      "type": "text",
+      "bbox_px": [
+        148,
+        814,
+        1217,
+        892
+      ],
+      "bbox_norm": [
+        0.1053,
+        0.4048,
+        0.8659,
+        0.4433
+      ],
+      "confidence": 1.0,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 4
+    },
+    {
+      "id": "p12_e5",
+      "type": "text",
+      "bbox_px": [
+        182,
+        914,
+        766,
+        944
+      ],
+      "bbox_norm": [
+        0.1292,
+        0.4541,
+        0.545,
+        0.4692
+      ],
+      "confidence": 0.9994,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 5
+    },
+    {
+      "id": "p12_e6",
+      "type": "handwriting",
+      "bbox_px": [
+        350,
+        984,
+        1026,
+        1091
+      ],
+      "bbox_norm": [
+        0.249,
+        0.4891,
+        0.7302,
+        0.5425
+      ],
+      "confidence": 0.834,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 6
+    },
+    {
+      "id": "p12_e7",
+      "type": "text",
+      "bbox_px": [
+        182,
+        1132,
+        1023,
+        1168
+      ],
+      "bbox_norm": [
+        0.1295,
+        0.5626,
+        0.7279,
+        0.5806
+      ],
+      "confidence": 0.9947,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 7
+    },
+    {
+      "id": "p12_e8",
+      "type": "picture",
+      "bbox_px": [
+        144,
+        1225,
+        1224,
+        1420
+      ],
+      "bbox_norm": [
+        0.1028,
+        0.6091,
+        0.871,
+        0.7057
+      ],
+      "confidence": 0.7566,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 8
+    },
+    {
+      "id": "p12_e9",
+      "type": "text",
+      "bbox_px": [
+        145,
+        1462,
+        1221,
+        1741
+      ],
+      "bbox_norm": [
+        0.1033,
+        0.7264,
+        0.8688,
+        0.8653
+      ],
+      "confidence": 0.9999,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 9
+    },
+    {
+      "id": "p12_e10",
+      "type": "text",
+      "bbox_px": [
+        146,
+        1758,
+        1219,
+        1838
+      ],
+      "bbox_norm": [
+        0.104,
+        0.8739,
+        0.8679,
+        0.9134
+      ],
+      "confidence": 1.0,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 10
+    },
+    {
+      "id": "p12_e11",
+      "type": "sectionheader",
+      "bbox_px": [
+        144,
+        1904,
+        403,
+        1936
+      ],
+      "bbox_norm": [
+        0.1022,
+        0.9465,
+        0.2871,
+        0.9624
+      ],
+      "confidence": 0.8395,
+      "text": null,
+      "latex": null,
+      "description": null,
+      "reading_order": 11
+    }
+  ]
+}

@@ -1,0 +1,1018 @@
+[
+  {
+    "page_id": 10,
+    "image_size": {
+      "width": 1405,
+      "height": 2010
+    },
+    "element_count": 4,
+    "elements": [
+      {
+        "id": "p10_e1",
+        "type": "sectionheader",
+        "bbox_px": [
+          230,
+          562,
+          742,
+          867
+        ],
+        "bbox_norm": [
+          0.1636,
+          0.2795,
+          0.5285,
+          0.4312
+        ],
+        "confidence": 0.7626,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 1
+      },
+      {
+        "id": "p10_e2",
+        "type": "text",
+        "bbox_px": [
+          235,
+          975,
+          406,
+          1128
+        ],
+        "bbox_norm": [
+          0.1674,
+          0.485,
+          0.2892,
+          0.5612
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 2
+      },
+      {
+        "id": "p10_e3",
+        "type": "sectionheader",
+        "bbox_px": [
+          283,
+          1372,
+          458,
+          1412
+        ],
+        "bbox_norm": [
+          0.2014,
+          0.6828,
+          0.3257,
+          0.7027
+        ],
+        "confidence": 0.9916,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 3
+      },
+      {
+        "id": "p10_e4",
+        "type": "text",
+        "bbox_px": [
+          229,
+          1456,
+          694,
+          1721
+        ],
+        "bbox_norm": [
+          0.163,
+          0.7245,
+          0.4941,
+          0.8561
+        ],
+        "confidence": 0.9683,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 4
+      }
+    ]
+  },
+  {
+    "page_id": 11,
+    "image_size": {
+      "width": 1405,
+      "height": 2009
+    },
+    "element_count": 6,
+    "elements": [
+      {
+        "id": "p11_e1",
+        "type": "figure",
+        "bbox_px": [
+          164,
+          156,
+          1213,
+          932
+        ],
+        "bbox_norm": [
+          0.1165,
+          0.0778,
+          0.863,
+          0.4638
+        ],
+        "confidence": 0.9048,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 1
+      },
+      {
+        "id": "p11_e3",
+        "type": "text",
+        "bbox_px": [
+          212,
+          1059,
+          328,
+          1094
+        ],
+        "bbox_norm": [
+          0.1511,
+          0.527,
+          0.2334,
+          0.5446
+        ],
+        "confidence": 0.4896,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 2
+      },
+      {
+        "id": "p11_e2",
+        "type": "text",
+        "bbox_px": [
+          263,
+          1059,
+          751,
+          1092
+        ],
+        "bbox_norm": [
+          0.1868,
+          0.5272,
+          0.5343,
+          0.5437
+        ],
+        "confidence": 0.8384,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 3
+      },
+      {
+        "id": "p11_e6",
+        "type": "handwriting",
+        "bbox_px": [
+          550,
+          1208,
+          852,
+          1280
+        ],
+        "bbox_norm": [
+          0.3912,
+          0.6011,
+          0.6062,
+          0.6372
+        ],
+        "confidence": 0.411,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 4
+      },
+      {
+        "id": "p11_e5",
+        "type": "equation",
+        "bbox_px": [
+          196,
+          1353,
+          1223,
+          1804
+        ],
+        "bbox_norm": [
+          0.1395,
+          0.6737,
+          0.8705,
+          0.8979
+        ],
+        "confidence": 0.6551,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 5
+      },
+      {
+        "id": "p11_e4",
+        "type": "text",
+        "bbox_px": [
+          1042,
+          1906,
+          1251,
+          1934
+        ],
+        "bbox_norm": [
+          0.7415,
+          0.9485,
+          0.8901,
+          0.9625
+        ],
+        "confidence": 0.6775,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 6
+      }
+    ]
+  },
+  {
+    "page_id": 12,
+    "image_size": {
+      "width": 1405,
+      "height": 2012
+    },
+    "element_count": 11,
+    "elements": [
+      {
+        "id": "p12_e1",
+        "type": "picture",
+        "bbox_px": [
+          136,
+          167,
+          1219,
+          569
+        ],
+        "bbox_norm": [
+          0.0965,
+          0.0832,
+          0.8675,
+          0.2829
+        ],
+        "confidence": 0.951,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 1
+      },
+      {
+        "id": "p12_e2",
+        "type": "text",
+        "bbox_px": [
+          148,
+          612,
+          1220,
+          691
+        ],
+        "bbox_norm": [
+          0.1056,
+          0.3044,
+          0.8686,
+          0.3436
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 2
+      },
+      {
+        "id": "p12_e3",
+        "type": "text",
+        "bbox_px": [
+          149,
+          714,
+          1217,
+          794
+        ],
+        "bbox_norm": [
+          0.1063,
+          0.3549,
+          0.8661,
+          0.3947
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 3
+      },
+      {
+        "id": "p12_e4",
+        "type": "text",
+        "bbox_px": [
+          148,
+          814,
+          1217,
+          892
+        ],
+        "bbox_norm": [
+          0.1053,
+          0.4048,
+          0.8659,
+          0.4433
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 4
+      },
+      {
+        "id": "p12_e5",
+        "type": "text",
+        "bbox_px": [
+          182,
+          914,
+          766,
+          944
+        ],
+        "bbox_norm": [
+          0.1292,
+          0.4541,
+          0.545,
+          0.4692
+        ],
+        "confidence": 0.9994,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 5
+      },
+      {
+        "id": "p12_e6",
+        "type": "handwriting",
+        "bbox_px": [
+          350,
+          984,
+          1026,
+          1091
+        ],
+        "bbox_norm": [
+          0.249,
+          0.4891,
+          0.7302,
+          0.5425
+        ],
+        "confidence": 0.834,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 6
+      },
+      {
+        "id": "p12_e7",
+        "type": "text",
+        "bbox_px": [
+          182,
+          1132,
+          1023,
+          1168
+        ],
+        "bbox_norm": [
+          0.1295,
+          0.5626,
+          0.7279,
+          0.5806
+        ],
+        "confidence": 0.9947,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 7
+      },
+      {
+        "id": "p12_e8",
+        "type": "picture",
+        "bbox_px": [
+          144,
+          1225,
+          1224,
+          1420
+        ],
+        "bbox_norm": [
+          0.1028,
+          0.6091,
+          0.871,
+          0.7057
+        ],
+        "confidence": 0.7566,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 8
+      },
+      {
+        "id": "p12_e9",
+        "type": "text",
+        "bbox_px": [
+          145,
+          1462,
+          1221,
+          1741
+        ],
+        "bbox_norm": [
+          0.1033,
+          0.7264,
+          0.8688,
+          0.8653
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 9
+      },
+      {
+        "id": "p12_e10",
+        "type": "text",
+        "bbox_px": [
+          146,
+          1758,
+          1219,
+          1838
+        ],
+        "bbox_norm": [
+          0.104,
+          0.8739,
+          0.8679,
+          0.9134
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 10
+      },
+      {
+        "id": "p12_e11",
+        "type": "sectionheader",
+        "bbox_px": [
+          144,
+          1904,
+          403,
+          1936
+        ],
+        "bbox_norm": [
+          0.1022,
+          0.9465,
+          0.2871,
+          0.9624
+        ],
+        "confidence": 0.8395,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 11
+      }
+    ]
+  },
+  {
+    "page_id": 13,
+    "image_size": {
+      "width": 1403,
+      "height": 2004
+    },
+    "element_count": 13,
+    "elements": [
+      {
+        "id": "p13_e1",
+        "type": "text",
+        "bbox_px": [
+          168,
+          160,
+          1241,
+          241
+        ],
+        "bbox_norm": [
+          0.1197,
+          0.0799,
+          0.8843,
+          0.1201
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 1
+      },
+      {
+        "id": "p13_e2",
+        "type": "text",
+        "bbox_px": [
+          169,
+          260,
+          1241,
+          343
+        ],
+        "bbox_norm": [
+          0.1202,
+          0.1299,
+          0.8847,
+          0.1712
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 2
+      },
+      {
+        "id": "p13_e3",
+        "type": "text",
+        "bbox_px": [
+          169,
+          362,
+          692,
+          390
+        ],
+        "bbox_norm": [
+          0.1204,
+          0.1806,
+          0.4932,
+          0.1948
+        ],
+        "confidence": 0.9995,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 3
+      },
+      {
+        "id": "p13_e4",
+        "type": "text",
+        "bbox_px": [
+          169,
+          410,
+          1243,
+          540
+        ],
+        "bbox_norm": [
+          0.1206,
+          0.2045,
+          0.8862,
+          0.2695
+        ],
+        "confidence": 0.9998,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 4
+      },
+      {
+        "id": "p13_e5",
+        "type": "sectionheader",
+        "bbox_px": [
+          510,
+          689,
+          903,
+          716
+        ],
+        "bbox_norm": [
+          0.3638,
+          0.3437,
+          0.6438,
+          0.3573
+        ],
+        "confidence": 0.9966,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 5
+      },
+      {
+        "id": "p13_e6",
+        "type": "text",
+        "bbox_px": [
+          219,
+          736,
+          1204,
+          766
+        ],
+        "bbox_norm": [
+          0.1562,
+          0.3674,
+          0.8584,
+          0.3823
+        ],
+        "confidence": 0.9989,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 6
+      },
+      {
+        "id": "p13_e7",
+        "type": "text",
+        "bbox_px": [
+          169,
+          913,
+          694,
+          940
+        ],
+        "bbox_norm": [
+          0.1206,
+          0.4558,
+          0.4946,
+          0.4692
+        ],
+        "confidence": 0.6158,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 7
+      },
+      {
+        "id": "p13_e8",
+        "type": "text",
+        "bbox_px": [
+          170,
+          961,
+          1241,
+          1089
+        ],
+        "bbox_norm": [
+          0.1211,
+          0.4795,
+          0.8844,
+          0.5437
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 8
+      },
+      {
+        "id": "p13_e9",
+        "type": "text",
+        "bbox_px": [
+          412,
+          1236,
+          1003,
+          1264
+        ],
+        "bbox_norm": [
+          0.2937,
+          0.6169,
+          0.7149,
+          0.6308
+        ],
+        "confidence": 0.5532,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 9
+      },
+      {
+        "id": "p13_e10",
+        "type": "text",
+        "bbox_px": [
+          263,
+          1282,
+          1148,
+          1308
+        ],
+        "bbox_norm": [
+          0.1875,
+          0.6399,
+          0.8183,
+          0.6529
+        ],
+        "confidence": 0.9967,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 10
+      },
+      {
+        "id": "p13_e11",
+        "type": "text",
+        "bbox_px": [
+          167,
+          1456,
+          1239,
+          1586
+        ],
+        "bbox_norm": [
+          0.1192,
+          0.7265,
+          0.8832,
+          0.7914
+        ],
+        "confidence": 0.9998,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 11
+      },
+      {
+        "id": "p13_e12",
+        "type": "text",
+        "bbox_px": [
+          167,
+          1605,
+          1242,
+          1828
+        ],
+        "bbox_norm": [
+          0.1189,
+          0.8008,
+          0.8853,
+          0.9124
+        ],
+        "confidence": 0.9998,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 12
+      },
+      {
+        "id": "p13_e13",
+        "type": "text",
+        "bbox_px": [
+          1022,
+          1902,
+          1240,
+          1930
+        ],
+        "bbox_norm": [
+          0.7288,
+          0.9491,
+          0.8837,
+          0.9632
+        ],
+        "confidence": 0.4483,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 13
+      }
+    ]
+  },
+  {
+    "page_id": 14,
+    "image_size": {
+      "width": 1402,
+      "height": 2004
+    },
+    "element_count": 12,
+    "elements": [
+      {
+        "id": "p14_e1",
+        "type": "text",
+        "bbox_px": [
+          160,
+          159,
+          1231,
+          239
+        ],
+        "bbox_norm": [
+          0.1142,
+          0.0793,
+          0.8781,
+          0.1192
+        ],
+        "confidence": 0.999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 1
+      },
+      {
+        "id": "p14_e2",
+        "type": "text",
+        "bbox_px": [
+          435,
+          368,
+          961,
+          444
+        ],
+        "bbox_norm": [
+          0.3104,
+          0.1836,
+          0.6853,
+          0.2216
+        ],
+        "confidence": 0.9423,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 2
+      },
+      {
+        "id": "p14_e3",
+        "type": "picture",
+        "bbox_px": [
+          206,
+          592,
+          318,
+          622
+        ],
+        "bbox_norm": [
+          0.1469,
+          0.2955,
+          0.2269,
+          0.3102
+        ],
+        "confidence": 0.6932,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 3
+      },
+      {
+        "id": "p14_e4",
+        "type": "text",
+        "bbox_px": [
+          306,
+          602,
+          1173,
+          627
+        ],
+        "bbox_norm": [
+          0.218,
+          0.3002,
+          0.837,
+          0.3127
+        ],
+        "confidence": 0.9989,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 4
+      },
+      {
+        "id": "p14_e5",
+        "type": "text",
+        "bbox_px": [
+          222,
+          719,
+          1175,
+          791
+        ],
+        "bbox_norm": [
+          0.1586,
+          0.3588,
+          0.8384,
+          0.3948
+        ],
+        "confidence": 0.9993,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 5
+      },
+      {
+        "id": "p14_e6",
+        "type": "text",
+        "bbox_px": [
+          220,
+          816,
+          1176,
+          993
+        ],
+        "bbox_norm": [
+          0.1568,
+          0.407,
+          0.8386,
+          0.4955
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 6
+      },
+      {
+        "id": "p14_e7",
+        "type": "text",
+        "bbox_px": [
+          221,
+          1017,
+          1175,
+          1091
+        ],
+        "bbox_norm": [
+          0.1576,
+          0.5076,
+          0.8379,
+          0.5445
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 7
+      },
+      {
+        "id": "p14_e8",
+        "type": "text",
+        "bbox_px": [
+          220,
+          1116,
+          1173,
+          1189
+        ],
+        "bbox_norm": [
+          0.1568,
+          0.5571,
+          0.8368,
+          0.5932
+        ],
+        "confidence": 0.9999,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 8
+      },
+      {
+        "id": "p14_e9",
+        "type": "text",
+        "bbox_px": [
+          263,
+          1217,
+          1138,
+          1241
+        ],
+        "bbox_norm": [
+          0.1873,
+          0.6072,
+          0.8117,
+          0.6192
+        ],
+        "confidence": 0.5104,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 9
+      },
+      {
+        "id": "p14_e10",
+        "type": "text",
+        "bbox_px": [
+          161,
+          1465,
+          1232,
+          1546
+        ],
+        "bbox_norm": [
+          0.115,
+          0.7311,
+          0.8788,
+          0.7713
+        ],
+        "confidence": 0.995,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 10
+      },
+      {
+        "id": "p14_e11",
+        "type": "text",
+        "bbox_px": [
+          161,
+          1563,
+          1232,
+          1794
+        ],
+        "bbox_norm": [
+          0.1151,
+          0.7801,
+          0.8785,
+          0.8952
+        ],
+        "confidence": 1.0,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 11
+      },
+      {
+        "id": "p14_e12",
+        "type": "sectionheader",
+        "bbox_px": [
+          163,
+          1901,
+          419,
+          1929
+        ],
+        "bbox_norm": [
+          0.116,
+          0.9488,
+          0.2987,
+          0.9624
+        ],
+        "confidence": 0.9623,
+        "text": null,
+        "latex": null,
+        "description": null,
+        "reading_order": 12
+      }
+    ]
+  }
+]

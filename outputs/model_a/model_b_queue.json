@@ -1,0 +1,74 @@
+[
+  {
+    "page_id": 11,
+    "element_id": "p11_e1",
+    "type": "figure",
+    "bbox_px": [
+      164,
+      156,
+      1213,
+      932
+    ],
+    "bbox_norm": [
+      0.1165,
+      0.0778,
+      0.863,
+      0.4638
+    ],
+    "reading_order": 1
+  },
+  {
+    "page_id": 12,
+    "element_id": "p12_e1",
+    "type": "picture",
+    "bbox_px": [
+      136,
+      167,
+      1219,
+      569
+    ],
+    "bbox_norm": [
+      0.0965,
+      0.0832,
+      0.8675,
+      0.2829
+    ],
+    "reading_order": 1
+  },
+  {
+    "page_id": 12,
+    "element_id": "p12_e8",
+    "type": "picture",
+    "bbox_px": [
+      144,
+      1225,
+      1224,
+      1420
+    ],
+    "bbox_norm": [
+      0.1028,
+      0.6091,
+      0.871,
+      0.7057
+    ],
+    "reading_order": 8
+  },
+  {
+    "page_id": 14,
+    "element_id": "p14_e3",
+    "type": "picture",
+    "bbox_px": [
+      206,
+      592,
+      318,
+      622
+    ],
+    "bbox_norm": [
+      0.1469,
+      0.2955,
+      0.2269,
+      0.3102
+    ],
+    "reading_order": 3
+  }
+]
