@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import sys
 import tempfile
@@ -36,12 +37,14 @@ app.add_middleware(
 )
 
 _OCR_ENGINES = {}
+_ANALYSIS_LOCK = asyncio.Lock()
 
 
 def _get_ocr_engine(lang: str):
     if lang not in _OCR_ENGINES:
         _OCR_ENGINES[lang] = _load_paddleocr(lang=lang)
     return _OCR_ENGINES[lang]
+
 
 def _save_upload(uploaded_file: UploadFile, target_dir: Path) -> Path:
     if not uploaded_file.filename or not uploaded_file.filename.lower().endswith(".pdf"):
@@ -64,6 +67,39 @@ def _count_pages(pdf_path: Path) -> int:
 def _image_data_url(path: Path) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def _analyze_saved_pdf(
+    pdf_path: Path,
+    work_dir: Path,
+    page_number: int,
+    dpi: int,
+    lang: str,
+    layout_model: str,
+    yolo_model_path: Optional[str],
+):
+    page_count = _count_pages(pdf_path)
+    if page_number < 1 or page_number > page_count:
+        raise HTTPException(status_code=400, detail=f"Page number must be between 1 and {page_count}.")
+
+    pdf_text_lines = extract_pdf_text_lines(pdf_path, page_number, dpi=dpi)
+    prefer_pdf_text = len(pdf_text_lines) >= 3
+    ocr_engine = None if prefer_pdf_text else _get_ocr_engine(lang)
+    selected_model_path = yolo_model_path.strip() if yolo_model_path else None
+    if layout_model == "doclayout_yolo":
+        selected_model_path = "hf:juliozhao/DocLayout-YOLO-DocStructBench"
+
+    result = process_single_page(
+        pdf_path=pdf_path,
+        page_number=page_number,
+        work_dir=work_dir,
+        dpi=dpi,
+        yolo_model_path=selected_model_path,
+        lang=lang,
+        ocr_engine=ocr_engine,
+        prefer_pdf_text=prefer_pdf_text,
+    )
+    return page_count, result
 
 
 @app.get("/api/health")
@@ -95,26 +131,17 @@ async def analyze_page(
         tmp_dir = Path(tmp)
         pdf_path = _save_upload(file, tmp_dir / "uploads")
         try:
-            page_count = _count_pages(pdf_path)
-            if page_number < 1 or page_number > page_count:
-                raise HTTPException(status_code=400, detail=f"Page number must be between 1 and {page_count}.")
-
-            pdf_text_lines = extract_pdf_text_lines(pdf_path, page_number, dpi=dpi)
-            prefer_pdf_text = len(pdf_text_lines) >= 3
-            ocr_engine = None if prefer_pdf_text else _get_ocr_engine(lang)
-            selected_model_path = yolo_model_path.strip() if yolo_model_path else None
-            if layout_model == "doclayout_yolo":
-                selected_model_path = "hf:juliozhao/DocLayout-YOLO-DocStructBench"
-            result = process_single_page(
-                pdf_path=pdf_path,
-                page_number=page_number,
-                work_dir=tmp_dir / "results",
-                dpi=dpi,
-                yolo_model_path=selected_model_path,
-                lang=lang,
-                ocr_engine=ocr_engine,
-                prefer_pdf_text=prefer_pdf_text,
-            )
+            async with _ANALYSIS_LOCK:
+                page_count, result = await asyncio.to_thread(
+                    _analyze_saved_pdf,
+                    pdf_path,
+                    tmp_dir / "results",
+                    page_number,
+                    dpi,
+                    lang,
+                    layout_model,
+                    yolo_model_path,
+                )
         except HTTPException:
             raise
         except RuntimeError as exc:

@@ -468,6 +468,11 @@ def _supplement_missing_paragraph_lines(blocks: List[Dict], ocr_lines: List[Dict
     return _merge_and_filter(result)
 
 
+def _supplement_and_expand_paragraphs(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    recovered = _supplement_missing_paragraph_lines(blocks, ocr_lines)
+    return _expand_paragraphs_with_nearby_ocr_lines(recovered, ocr_lines)
+
+
 def _covered_by_existing_relaxed(bbox: List[int], blocks: List[Dict]) -> bool:
     for block in blocks:
         overlap = _intersection_over_area(bbox, block["bbox"])
@@ -513,15 +518,15 @@ def _looks_like_paragraph_continuation(text: str) -> bool:
 
 
 def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] = None) -> List[Dict]:
+    lines = ocr_lines or []
     processed = _postprocess_blocks(blocks, None, None)
-    processed = _expand_paragraphs_with_nearby_ocr_lines(processed, ocr_lines or [])
-    processed = _supplement_missing_paragraph_lines(processed, ocr_lines or [])
-    processed = _expand_paragraphs_with_nearby_ocr_lines(processed, ocr_lines or [])
-    split = _split_mixed_role_blocks(processed, ocr_lines or [])
+    processed = _expand_paragraphs_with_nearby_ocr_lines(processed, lines)
+    processed = _supplement_and_expand_paragraphs(processed, lines)
+    split = _split_mixed_role_blocks(processed, lines)
     normalized = _normalize_content_blocks(_postprocess_blocks(split, None, None))
-    recovered = _supplement_missing_paragraph_lines(normalized, ocr_lines or [])
-    recovered = _expand_paragraphs_with_nearby_ocr_lines(recovered, ocr_lines or [])
-    return _supplement_nested_formula_lines(recovered, ocr_lines or [])
+    recovered = _supplement_and_expand_paragraphs(normalized, lines)
+    recovered = _normalize_paragraph_text_order(recovered)
+    return _supplement_nested_formula_lines(recovered, lines)
 
 
 def _supplement_nested_formula_lines(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
@@ -1024,15 +1029,6 @@ def _looks_like_table(binary_roi: np.ndarray) -> bool:
     return line_pixels / max(binary_roi.size, 1) > 0.025
 
 
-def _looks_like_graph(binary_roi: np.ndarray, aspect: float) -> bool:
-    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 45))
-    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (45, 1))
-    vertical = cv2.morphologyEx(binary_roi, cv2.MORPH_OPEN, v_kernel)
-    horizontal = cv2.morphologyEx(binary_roi, cv2.MORPH_OPEN, h_kernel)
-    has_axes = np.count_nonzero(vertical) > 80 and np.count_nonzero(horizontal) > 80
-    return has_axes and 0.5 <= aspect <= 2.5
-
-
 def _group_paragraph_lines(blocks: List[Dict]) -> List[Dict]:
     grouped: List[Dict] = []
     paragraph_buffer: List[Dict] = []
@@ -1085,7 +1081,6 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
         role = _infer_role(text)
         if role != "normal":
             block["role"] = role
-        compact = text.replace(" ", "")
         if _looks_like_choice_or_answer_list(text):
             block["type"] = "paragraph"
         elif _looks_like_header_box(text):
@@ -1100,8 +1095,6 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
             block["type"] = "paragraph"
         elif block["type"] == "formula" and (_looks_like_unit_note(text) or _looks_like_sentence_with_math(text)):
             block["type"] = "caption" if _looks_like_unit_note(text) else "paragraph"
-        elif block["type"] == "formula" and _looks_like_unit_note(text):
-            block["type"] = "caption"
         elif block["type"] == "paragraph" and _looks_like_formula(text) and not _looks_like_long_sentence(text):
             block["type"] = "formula"
         elif block["type"] in {"formula", "paragraph"} and _looks_like_table_text(text):
@@ -1196,11 +1189,24 @@ def _group_lines_by_content(lines: List[Dict]) -> List[List[Dict]]:
 
     merged: List[List[Dict]] = []
     for group in groups:
-        if len(group) == 1 and merged and _line_content_type(group[0].get("text", "")) == "caption":
+        if merged and _should_merge_paragraph_groups(merged[-1], group):
+            merged[-1].extend(group)
+        elif len(group) == 1 and merged and _line_content_type(group[0].get("text", "")) == "caption":
             merged[-1].extend(group)
         else:
             merged.append(group)
     return merged
+
+
+def _should_merge_paragraph_groups(previous: List[Dict], current: List[Dict]) -> bool:
+    previous_text = "\n".join(item.get("text", "") for item in previous)
+    current_text = "\n".join(item.get("text", "") for item in current)
+    if _classify_content_text(previous_text) != "paragraph" or _classify_content_text(current_text) != "paragraph":
+        return False
+
+    previous_bottom = max(item["bbox"][3] for item in previous)
+    current_top = min(item["bbox"][1] for item in current)
+    return current_top - previous_bottom < 36
 
 
 def _line_content_type(text: str) -> str:
@@ -1222,6 +1228,7 @@ def _line_content_type(text: str) -> str:
 def _block_from_lines(
     lines: List[Dict], role: str, container_id: str, group_index: int, container_bbox: List[int]
 ) -> Optional[Dict]:
+    lines = _sort_ocr_lines_for_text(lines)
     text = "\n".join(line.get("text", "") for line in lines).strip()
     if not text:
         return None
@@ -1249,6 +1256,29 @@ def _block_from_lines(
         "score": 0.50,
         "group_index": group_index,
     }
+
+
+def _is_short_role_title(text: str) -> bool:
+    compact = text.replace(" ", "")
+    if len(compact) > 16:
+        return False
+    role_titles = ["예제", "보기", "따라하기", "풀이", "해설", "정답", "문제", "확인문제", "연습문제", "생각열기"]
+    return any(compact.startswith(title) for title in role_titles)
+
+
+def _promote_role_title_text(text: str) -> str:
+    text_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    title_lines = [line for line in text_lines if _is_short_role_title(line)]
+    if not title_lines:
+        return text
+    return "\n".join(title_lines + [line for line in text_lines if line not in title_lines])
+
+
+def _normalize_paragraph_text_order(blocks: List[Dict]) -> List[Dict]:
+    for block in blocks:
+        if block["type"] == "paragraph" and block.get("text"):
+            block["text"] = _promote_role_title_text(block["text"])
+    return blocks
 
 
 def _classify_content_text(text: str) -> str:
