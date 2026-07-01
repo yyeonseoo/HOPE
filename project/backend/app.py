@@ -38,6 +38,7 @@ app.add_middleware(
 
 _OCR_ENGINES = {}
 _ANALYSIS_LOCK = asyncio.Lock()
+LAYOUT_MODES = {"doclayout_yolo", "doclayout_yolo_raw"}
 
 
 def _get_ocr_engine(lang: str):
@@ -86,8 +87,9 @@ def _analyze_saved_pdf(
     prefer_pdf_text = len(pdf_text_lines) >= 3
     ocr_engine = None if prefer_pdf_text else _get_ocr_engine(lang)
     selected_model_path = yolo_model_path.strip() if yolo_model_path else None
-    if layout_model == "doclayout_yolo":
-        selected_model_path = "hf:juliozhao/DocLayout-YOLO-DocStructBench"
+    if layout_model not in LAYOUT_MODES:
+        raise HTTPException(status_code=400, detail=f"Unknown layout model: {layout_model}")
+    selected_model_path = "hf:juliozhao/DocLayout-YOLO-DocStructBench"
 
     result = process_single_page(
         pdf_path=pdf_path,
@@ -98,6 +100,7 @@ def _analyze_saved_pdf(
         lang=lang,
         ocr_engine=ocr_engine,
         prefer_pdf_text=prefer_pdf_text,
+        model_only=layout_model == "doclayout_yolo_raw",
     )
     return page_count, result
 
@@ -124,7 +127,7 @@ async def analyze_page(
     page_number: int = Form(...),
     dpi: int = Form(120),
     lang: str = Form("korean"),
-    layout_model: str = Form("heuristic"),
+    layout_model: str = Form("doclayout_yolo"),
     yolo_model_path: Optional[str] = Form(None),
 ):
     with tempfile.TemporaryDirectory(prefix="textbook_layout_") as tmp:
@@ -155,4 +158,5 @@ async def analyze_page(
             "page_image": _image_data_url(result["page_image_path"]),
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],
+            "layout_mode": result["layout_mode"],
         }

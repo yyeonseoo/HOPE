@@ -23,7 +23,7 @@ export default function App() {
   const [pageCount, setPageCount] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [dpi, setDpi] = useState(120);
-  const [layoutModel, setLayoutModel] = useState("heuristic");
+  const [layoutModel, setLayoutModel] = useState("doclayout_yolo");
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -157,8 +157,8 @@ export default function App() {
           <label className="model-field">
             Layout model
             <select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}>
-              <option value="heuristic">Heuristic fallback</option>
-              <option value="doclayout_yolo">DocLayout-YOLO</option>
+              <option value="doclayout_yolo">DocLayout-YOLO + 보정 규칙</option>
+              <option value="doclayout_yolo_raw">DocLayout-YOLO 원본</option>
             </select>
           </label>
 

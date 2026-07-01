@@ -1,18 +1,165 @@
 import unittest
+from unittest.mock import patch
 
 from src.layout_detection import (
+    _drop_broad_figures_covering_content,
     _expand_paragraphs_with_nearby_ocr_lines,
     _looks_like_table_text,
+    _merge_side_badges_into_paragraphs,
+    _merge_numbered_items_with_parallel_explanations,
     _normalize_paragraph_text_order,
     _group_lines_by_content,
+    _is_recoverable_low_conf_figure,
     _postprocess_blocks,
     _promote_role_title_text,
     _split_mixed_role_blocks,
+    _split_answer_lines_from_paragraphs,
     _supplement_nested_formula_lines,
+    detect_layout,
 )
 
 
 class LayoutPostprocessingTests(unittest.TestCase):
+    def test_low_confidence_figure_recovery_uses_relative_size(self):
+        self.assertTrue(
+            _is_recoverable_low_conf_figure("figure", 0.163, [1217, 379, 1713, 644], 2000, 2600)
+        )
+        self.assertFalse(
+            _is_recoverable_low_conf_figure("figure", 0.163, [508, 319, 1806, 1369], 2000, 2600)
+        )
+        self.assertFalse(
+            _is_recoverable_low_conf_figure("figure", 0.06, [1217, 379, 1713, 644], 2000, 2600)
+        )
+
+    def test_broad_false_figure_does_not_hide_smaller_visual(self):
+        broad = {"type": "figure", "bbox": [225, 160, 902, 692], "score": 0.339}
+        cylinder = {"type": "figure", "bbox": [609, 189, 857, 322], "score": 0.154}
+        content = [
+            {"type": "paragraph", "bbox": [292, 191, 596, 283], "score": 0.8},
+            {"type": "paragraph", "bbox": [303, 375, 582, 460], "score": 0.8},
+            {"type": "paragraph", "bbox": [302, 512, 583, 657], "score": 0.8},
+        ]
+
+        result = _drop_broad_figures_covering_content([broad, cylinder, *content], 995, 1326)
+
+        self.assertNotIn(broad, result)
+        self.assertIn(cylinder, result)
+
+    def test_parallel_explanation_merges_but_answer_stays_separate(self):
+        left_item = {
+            "type": "paragraph",
+            "bbox": [50, 390, 340, 430],
+            "text": "⑶ 속력이 0이 되면 정지한다.",
+            "score": 0.9,
+        }
+        right_first = {
+            "type": "section_title",
+            "bbox": [470, 382, 840, 425],
+            "text": "240초 후 속력이 0이 되었으므로 정",
+            "score": 0.8,
+        }
+        right_tail_and_answer = {
+            "type": "paragraph",
+            "bbox": [468, 427, 820, 505],
+            "text": "지할 때까지 걸린 시간은 240초이다.\n답 ⑴ 20m/s ⑵ 150초 ⑶ 240초",
+            "score": 0.8,
+        }
+        ocr_lines = [
+            {"bbox": [470, 430, 815, 460], "text": "지할 때까지 걸린 시간은 240초이다.", "score": 0.9},
+            {"bbox": [470, 480, 815, 500], "text": "답 ⑴ 20m/s ⑵ 150초 ⑶ 240초", "score": 0.9},
+        ]
+
+        split = _split_answer_lines_from_paragraphs(
+            [left_item, right_first, right_tail_and_answer], ocr_lines
+        )
+        result = _merge_numbered_items_with_parallel_explanations(split)
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(paragraphs), 2)
+        self.assertIn("⑶ 속력이 0이 되면 정지한다.", paragraphs[0]["text"])
+        self.assertIn("240초 후 속력이 0이 되었으므로 정", paragraphs[0]["text"])
+        self.assertIn("지할 때까지 걸린 시간은 240초이다.", paragraphs[0]["text"])
+        self.assertIn("정지할 때까지", paragraphs[0]["text"])
+        self.assertEqual(paragraphs[1]["context"]["semantic_role"], "answer")
+        self.assertTrue(paragraphs[1]["text"].startswith("답 ⑴"))
+
+    def test_answer_text_splits_without_separate_ocr_line(self):
+        block = {
+            "type": "paragraph",
+            "bbox": [470, 427, 820, 505],
+            "text": "정지할 때까지 걸린 시간은 240초이다.\n답 (1) 20m/s (2) 150초 (3) 240초",
+            "score": 0.8,
+        }
+
+        result = _split_answer_lines_from_paragraphs([block], [])
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["text"], "정지할 때까지 걸린 시간은 240초이다.")
+        self.assertTrue(result[1]["text"].startswith("답 (1)"))
+        self.assertEqual(result[1]["context"]["semantic_role"], "answer")
+
+    def test_badge_directly_above_merges_into_paragraph(self):
+        badge = {"type": "title", "bbox": [614, 1378, 747, 1419], "text": "", "score": 0.7}
+        paragraph = {
+            "type": "paragraph",
+            "bbox": [563, 1429, 1603, 1538],
+            "text": "⑴ 그래프에서 속력이 가장 빠른 경우를 찾는다.",
+            "score": 0.9,
+        }
+
+        result = _merge_side_badges_into_paragraphs([badge, paragraph])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["bbox"], [563, 1378, 1603, 1538])
+        self.assertEqual(result[0]["context"]["label_source"], "side_badge")
+
+    def test_short_explanation_fragment_is_not_a_section_title(self):
+        block = {
+            "type": "section_title",
+            "bbox": [470, 382, 840, 425],
+            "text": "240초 후 속력이 0이 되었으므로 정",
+            "score": 0.8,
+        }
+
+        result = _postprocess_blocks([block], None, None)
+
+        self.assertEqual(result[0]["type"], "paragraph")
+
+    def test_small_side_badge_merges_into_adjacent_paragraph(self):
+        badge = {"type": "title", "bbox": [100, 105, 140, 145], "text": "생각열기", "score": 0.7}
+        paragraph = {
+            "type": "paragraph",
+            "bbox": [148, 100, 650, 170],
+            "text": "오른쪽 그래프를 보고 다음 물음에 답하여라.",
+            "score": 0.9,
+        }
+
+        result = _merge_side_badges_into_paragraphs([badge, paragraph])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["type"], "paragraph")
+        self.assertEqual(result[0]["bbox"], [100, 100, 650, 170])
+        self.assertEqual(result[0]["context"]["label_text"], "생각열기")
+        self.assertEqual(result[0]["context"]["role_hint"], "problem")
+
+    def test_page_footer_does_not_merge_into_distant_paragraph(self):
+        paragraph = {"type": "paragraph", "bbox": [100, 600, 650, 680], "text": "본문", "score": 0.9}
+        footer = {"type": "footer", "bbox": [100, 900, 260, 925], "text": "120 좌표평면", "score": 0.8}
+
+        result = _merge_side_badges_into_paragraphs([paragraph, footer])
+
+        self.assertEqual([block["type"] for block in result], ["paragraph", "footer"])
+
+    def test_model_only_detection_skips_all_supplements(self):
+        raw_blocks = [{"type": "paragraph", "bbox": [10, 20, 100, 80], "score": 0.91}]
+        with patch("src.layout_detection._detect_with_yolo", return_value=raw_blocks), patch(
+            "src.layout_detection._postprocess_blocks"
+        ) as postprocess:
+            result = detect_layout("unused.png", yolo_model_path="model.pt", use_supplements=False)
+
+        self.assertEqual(result, raw_blocks)
+        postprocess.assert_not_called()
+
     def test_numeric_prose_is_not_a_table(self):
         text = (
             "예제 2 담뱃세 인상으로 담배 한 갑당 국민 건강 증진 부담금이 354원에서 841원으로\n"

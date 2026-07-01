@@ -15,7 +15,12 @@ PDF upload
   -> JSON + visualization
 ```
 
-웹에서 DocLayout-YOLO를 선택하면 모델이 기본 레이아웃을 먼저 탐지하며, 규칙은 모델이 놓친 텍스트와 수식을 복구하고 오분류를 교정하는 보조 단계로 사용됩니다. Heuristic을 선택하면 OCR과 OpenCV 기반 탐지만 실행합니다. 웹 요청은 선택한 페이지만 임시 폴더에서 처리하므로 페이지 PNG가 프로젝트에 계속 쌓이지 않습니다.
+웹에서는 같은 DocLayout-YOLO 모델을 두 가지 방식으로 비교할 수 있습니다. 웹 요청은 선택한 페이지만 임시 폴더에서 처리하므로 페이지 PNG가 프로젝트에 계속 쌓이지 않습니다.
+
+- `DocLayout-YOLO + 보정 규칙`: 모델 탐지 후 OCR/OpenCV 보충, 교과서 박스 분리, 누락 문장·수식 복구, 오분류 교정을 적용합니다.
+- `DocLayout-YOLO 원본`: 모델이 반환한 bounding box와 클래스에 OCR 텍스트와 reading order만 추가합니다. 프로젝트의 보충·후처리 규칙은 적용하지 않습니다.
+
+두 모드는 같은 렌더링 DPI, OCR, DocLayout-YOLO 가중치를 사용하므로 보정 규칙 적용 전후를 비교하기 위한 옵션입니다.
 
 ## Output Classes
 
@@ -102,7 +107,7 @@ cd C:\Users\USER\HOPE\project
 powershell -ExecutionPolicy Bypass -File .\run_frontend.ps1
 ```
 
-브라우저에서 `http://127.0.0.1:5174`를 엽니다. PDF를 업로드하고 페이지 번호와 DPI를 입력한 뒤, `Layout model`에서 `DocLayout-YOLO`를 선택하고 `페이지 분석`을 누릅니다.
+브라우저에서 `http://127.0.0.1:5174`를 엽니다. PDF를 업로드하고 페이지 번호와 DPI를 입력한 뒤, `Layout model`에서 보정 규칙 적용 여부를 선택하고 `페이지 분석`을 누릅니다.
 
 교과서 PDF는 웹에서 직접 업로드하므로 반드시 `data/`에 넣을 필요는 없습니다. CLI로 전체 PDF를 처리할 때는 `project/data/` 사용을 권장합니다.
 
@@ -159,6 +164,8 @@ outputs/
 - 설명과 계산이 섞인 풀이 영역은 `paragraph`로 두고, 독립 수식 행은 `formula` 하위 블록으로 복구합니다.
 - 같은 행에 나란히 있는 여러 식은 하나의 formula 블록으로 묶을 수 있습니다.
 - 모델이 놓친 짧은 문장 조각은 가장 가까운 paragraph에 연결합니다.
+- paragraph 옆의 작은 `생각열기`·`문제`·`예제` 배지는 독립 제목으로 남기지 않고 paragraph의 `context`에 역할 정보로 보존합니다.
+- 보정 모드에서는 모델 기준점 바로 아래의 figure 후보도 페이지 상대 크기가 합리적이면 복구하며, 과도하게 크거나 아이콘처럼 작은 후보는 제외합니다.
 - 모델 탐지를 우선하며 OCR/OpenCV 규칙은 누락 복구와 클래스 교정에 사용합니다.
 
 ## Tests

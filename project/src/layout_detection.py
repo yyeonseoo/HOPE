@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -32,10 +33,19 @@ def detect_layout(
     image_path: str | Path,
     ocr_lines: Optional[List[Dict]] = None,
     yolo_model_path: Optional[str | Path] = None,
+    use_supplements: bool = True,
 ) -> List[Dict]:
     if yolo_model_path:
         try:
-            model_blocks = _postprocess_blocks(_detect_with_yolo(image_path, yolo_model_path), None, None)
+            raw_model_blocks = _detect_with_yolo(
+                image_path,
+                yolo_model_path,
+                recover_low_conf_figures=use_supplements,
+            )
+            if not use_supplements:
+                return raw_model_blocks
+
+            model_blocks = _postprocess_blocks(raw_model_blocks, None, None)
             heuristic_blocks = _detect_with_heuristics(image_path, ocr_lines or [])
             supplemented = _supplement_model_blocks(model_blocks, heuristic_blocks)
             supplemented = _supplement_uncovered_ocr_text(image_path, ocr_lines or [], supplemented)
@@ -440,7 +450,7 @@ def _looks_like_axis_or_legend_text(text: str) -> bool:
 
 def _starts_with_numbered_item(text: str) -> bool:
     stripped = text.strip()
-    return stripped.startswith(("(", "（")) and len(stripped) >= 2 and stripped[1:2].isdigit()
+    return bool(re.match(r"^(?:[\(（]\s*\d{1,2}\s*[\)）]|[①-⑳⑴-⒇])", stripped))
 
 
 def _supplement_missing_paragraph_lines(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
@@ -501,6 +511,7 @@ def _looks_like_paragraph_continuation(text: str) -> bool:
         "때의",
         "변화율",
         "이므로",
+        "으므로",
         "따라서",
         "이고",
         "이며",
@@ -525,6 +536,9 @@ def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] 
     split = _split_mixed_role_blocks(processed, lines)
     normalized = _normalize_content_blocks(_postprocess_blocks(split, None, None))
     recovered = _supplement_and_expand_paragraphs(normalized, lines)
+    recovered = _split_answer_lines_from_paragraphs(recovered, lines)
+    recovered = _merge_numbered_items_with_parallel_explanations(recovered)
+    recovered = _merge_side_badges_into_paragraphs(recovered)
     recovered = _normalize_paragraph_text_order(recovered)
     return _supplement_nested_formula_lines(recovered, lines)
 
@@ -605,10 +619,18 @@ def _looks_like_standalone_formula_line(text: str) -> bool:
     return korean_count <= 6 and (_looks_like_formula(text) or _looks_like_formula_block(text))
 
 
-def _detect_with_yolo(image_path: str | Path, model_path: str | Path) -> List[Dict]:
+def _detect_with_yolo(
+    image_path: str | Path,
+    model_path: str | Path,
+    recover_low_conf_figures: bool = False,
+) -> List[Dict]:
     model_ref = str(model_path)
     if model_ref.startswith("hf:"):
-        return _detect_with_doclayout_yolo(image_path, model_ref[3:])
+        return _detect_with_doclayout_yolo(
+            image_path,
+            model_ref[3:],
+            recover_low_conf_figures=recover_low_conf_figures,
+        )
 
     from ultralytics import YOLO
 
@@ -629,7 +651,11 @@ def _detect_with_yolo(image_path: str | Path, model_path: str | Path) -> List[Di
     return blocks
 
 
-def _detect_with_doclayout_yolo(image_path: str | Path, repo_id: str) -> List[Dict]:
+def _detect_with_doclayout_yolo(
+    image_path: str | Path,
+    repo_id: str,
+    recover_low_conf_figures: bool = False,
+) -> List[Dict]:
     cache_key = f"doclayout-yolo:{repo_id}"
     if cache_key not in _MODEL_CACHE:
         _MODEL_CACHE[cache_key] = _load_doclayout_yolo_model(repo_id)
@@ -638,24 +664,81 @@ def _detect_with_doclayout_yolo(image_path: str | Path, repo_id: str) -> List[Di
     result = model.predict(
         str(image_path),
         imgsz=1024,
-        conf=0.20,
+        conf=0.10 if recover_low_conf_figures else 0.20,
         device="cpu",
         verbose=False,
     )[0]
     names = result.names
+    image_height, image_width = result.orig_shape
     blocks: List[Dict] = []
     for box in result.boxes:
         cls_id = int(box.cls[0])
         label = _map_external_label(names.get(cls_id, str(cls_id)))
+        score = float(box.conf[0])
+        bbox = [int(v) for v in box.xyxy[0].tolist()]
+        low_conf_figure = score < 0.20
+        if low_conf_figure and not _is_recoverable_low_conf_figure(
+            label,
+            score,
+            bbox,
+            image_width,
+            image_height,
+        ):
+            continue
         blocks.append(
             {
                 "type": label,
-                "bbox": [int(v) for v in box.xyxy[0].tolist()],
-                "score": float(box.conf[0]),
-                "detector": "doclayout_yolo",
+                "bbox": bbox,
+                "score": score,
+                "detector": "doclayout_yolo_low_conf_figure" if low_conf_figure else "doclayout_yolo",
             }
         )
+    if recover_low_conf_figures:
+        blocks = _drop_broad_figures_covering_content(blocks, image_width, image_height)
     return blocks
+
+
+def _is_recoverable_low_conf_figure(
+    label: str,
+    score: float,
+    bbox: List[int],
+    image_width: int,
+    image_height: int,
+) -> bool:
+    if label != "figure" or score < 0.12:
+        return False
+    width = max(0, bbox[2] - bbox[0])
+    height = max(0, bbox[3] - bbox[1])
+    page_area = max(1, image_width * image_height)
+    area_ratio = width * height / page_area
+    return (
+        0.006 <= area_ratio <= 0.12
+        and width / max(image_width, 1) <= 0.48
+        and height / max(image_height, 1) <= 0.40
+    )
+
+
+def _drop_broad_figures_covering_content(
+    blocks: List[Dict],
+    image_width: int,
+    image_height: int,
+) -> List[Dict]:
+    page_area = max(1, image_width * image_height)
+    result = []
+    for block in blocks:
+        if block["type"] != "figure" or _area(block["bbox"]) / page_area < 0.20:
+            result.append(block)
+            continue
+
+        covered_content = sum(
+            other is not block
+            and other["type"] in {"title", "section_title", "paragraph", "formula", "table", "caption"}
+            and _intersection_over_area(other["bbox"], block["bbox"]) >= 0.65
+            for other in blocks
+        )
+        if covered_content < 3:
+            result.append(block)
+    return result
 
 
 def _load_doclayout_yolo_model(repo_id: str):
@@ -1091,7 +1174,9 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
             block["type"] = "formula"
         elif block["type"] in {"title", "section_title"} and _looks_like_formula(text):
             block["type"] = "formula"
-        elif block["type"] in {"title", "section_title", "formula"} and _looks_like_long_sentence(text):
+        elif block["type"] in {"title", "section_title", "formula"} and (
+            _looks_like_long_sentence(text) or _looks_like_paragraph_continuation(text)
+        ):
             block["type"] = "paragraph"
         elif block["type"] == "formula" and (_looks_like_unit_note(text) or _looks_like_sentence_with_math(text)):
             block["type"] = "caption" if _looks_like_unit_note(text) else "paragraph"
@@ -1279,6 +1364,261 @@ def _normalize_paragraph_text_order(blocks: List[Dict]) -> List[Dict]:
         if block["type"] == "paragraph" and block.get("text"):
             block["text"] = _promote_role_title_text(block["text"])
     return blocks
+
+
+def _split_answer_lines_from_paragraphs(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    """Separate a final answer line from the explanation above it."""
+    result: List[Dict] = []
+    for block in blocks:
+        if block["type"] != "paragraph":
+            result.append(block)
+            continue
+
+        text_parts = _split_answer_text(block.get("text", ""))
+        if text_parts is None:
+            result.append(block)
+            continue
+
+        inner_lines = _lines_inside(ocr_lines, block["bbox"])
+        answer_lines = [line for line in inner_lines if _is_answer_line(line.get("text", ""))]
+        content_lines = [line for line in inner_lines if line not in answer_lines]
+        content_block = dict(block)
+        answer_block = dict(block)
+        if answer_lines and content_lines:
+            content_block["bbox"] = _bbox_for_lines(content_lines)
+            content_block["text"] = "\n".join(
+                line.get("text", "").strip()
+                for line in _sort_ocr_lines_for_text(content_lines)
+                if line.get("text", "").strip()
+            )
+            answer_block["bbox"] = _bbox_for_lines(answer_lines)
+            answer_block["text"] = "\n".join(
+                line.get("text", "").strip()
+                for line in _sort_ocr_lines_for_text(answer_lines)
+                if line.get("text", "").strip()
+            )
+            answer_score = min(max(float(line.get("score", 0.45)) for line in answer_lines), 0.60)
+        else:
+            content_text, answer_text = text_parts
+            x1, y1, x2, y2 = block["bbox"]
+            source_lines = [line for line in block.get("text", "").splitlines() if line.strip()]
+            estimated_line_height = max(12, (y2 - y1) // max(len(source_lines), 2))
+            split_y = max(y1 + 1, y2 - estimated_line_height)
+            content_block["bbox"] = [x1, y1, x2, split_y]
+            content_block["text"] = content_text
+            answer_block["bbox"] = [x1, split_y, x2, y2]
+            answer_block["text"] = answer_text
+            answer_score = min(float(block.get("score", 0.45)), 0.60)
+        result.append(content_block)
+
+        answer_context = dict(block.get("context") or {})
+        answer_context["semantic_role"] = "answer"
+        answer_block["type"] = "paragraph"
+        answer_block["score"] = answer_score
+        answer_block["detector"] = "ocr_answer_recovery"
+        answer_block["context"] = answer_context
+        result.append(answer_block)
+    return result
+
+
+def _is_answer_line(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    return bool(re.match(r"^(?:정답|답)(?:[\(（①-⑳⑴-⒇]|:|：)", compact))
+
+
+def _split_answer_text(text: str) -> Optional[tuple[str, str]]:
+    match = re.search(
+        r"(?:^|\n)\s*((?:정답|답)\s*(?:[\(（①-⑳⑴-⒇]|:|：).*)$",
+        text,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return None
+    content = text[: match.start(1)].strip()
+    answer = match.group(1).strip()
+    if not content or not answer:
+        return None
+    return content, answer
+
+
+def _bbox_for_lines(lines: List[Dict]) -> List[int]:
+    return [
+        min(line["bbox"][0] for line in lines),
+        min(line["bbox"][1] for line in lines),
+        max(line["bbox"][2] for line in lines),
+        max(line["bbox"][3] for line in lines),
+    ]
+
+
+def _merge_numbered_items_with_parallel_explanations(blocks: List[Dict]) -> List[Dict]:
+    """Merge a numbered prompt with its explanation in the parallel right column."""
+    result = [dict(block) for block in blocks]
+    consumed = set()
+
+    for left_index, left in enumerate(result):
+        if left_index in consumed or left["type"] != "paragraph" or not _starts_with_numbered_item(left.get("text", "")):
+            continue
+        if (left.get("context") or {}).get("semantic_role") == "answer":
+            continue
+
+        lx1, ly1, lx2, ly2 = left["bbox"]
+        left_width = max(1, lx2 - lx1)
+        left_height = max(1, ly2 - ly1)
+        primary_candidates = []
+        for right_index, right in enumerate(result):
+            if right_index == left_index or right_index in consumed or right["type"] not in {
+                "paragraph",
+                "title",
+                "section_title",
+            }:
+                continue
+            if (right.get("context") or {}).get("semantic_role") == "answer":
+                continue
+            if _starts_with_numbered_item(right.get("text", "")):
+                continue
+            if _is_short_role_title(right.get("text", "")):
+                continue
+            rx1, ry1, rx2, ry2 = right["bbox"]
+            horizontal_gap = rx1 - lx2
+            vertical_overlap = min(ly2, ry2) - max(ly1, ry1)
+            overlap_ratio = vertical_overlap / max(1, min(left_height, ry2 - ry1))
+            if 0 <= horizontal_gap <= left_width * 1.5 and overlap_ratio >= 0.25:
+                primary_candidates.append((horizontal_gap + abs(ly1 - ry1) * 0.25, right_index))
+
+        if not primary_candidates:
+            continue
+
+        _, primary_index = min(primary_candidates)
+        primary = result[primary_index]
+        merged_indices = [left_index, primary_index]
+        px1, py1, px2, py2 = primary["bbox"]
+
+        for continuation_index, continuation in enumerate(result):
+            if continuation_index in merged_indices or continuation_index in consumed:
+                continue
+            if continuation["type"] not in {"paragraph", "title", "section_title"} or _starts_with_numbered_item(
+                continuation.get("text", "")
+            ):
+                continue
+            if _is_short_role_title(continuation.get("text", "")):
+                continue
+            if (continuation.get("context") or {}).get("semantic_role") == "answer":
+                continue
+            cx1, cy1, _, _ = continuation["bbox"]
+            vertical_gap = cy1 - py2
+            within_row_band = cy1 <= ly2 + max(left_height, 40)
+            if abs(cx1 - px1) <= 80 and -8 <= vertical_gap <= 24 and within_row_band:
+                merged_indices.append(continuation_index)
+
+        ordered_right = sorted(
+            [index for index in merged_indices if index != left_index],
+            key=lambda index: (result[index]["bbox"][1], result[index]["bbox"][0]),
+        )
+        merged_blocks = [left] + [result[index] for index in ordered_right]
+        left["bbox"] = [
+            min(block["bbox"][0] for block in merged_blocks),
+            min(block["bbox"][1] for block in merged_blocks),
+            max(block["bbox"][2] for block in merged_blocks),
+            max(block["bbox"][3] for block in merged_blocks),
+        ]
+        left["text"] = _join_paragraph_fragments(
+            [block.get("text", "").strip() for block in merged_blocks if block.get("text", "").strip()]
+        )
+        left["detector"] = "parallel_paragraph_merge"
+        consumed.update(index for index in merged_indices if index != left_index)
+
+    return [block for index, block in enumerate(result) if index not in consumed]
+
+
+def _join_paragraph_fragments(parts: List[str]) -> str:
+    if not parts:
+        return ""
+    merged = parts[0]
+    for part in parts[1:]:
+        previous_char = merged.rstrip()[-1:]
+        next_char = part.lstrip()[:1]
+        wrapped_korean_word = (
+            "\uac00" <= previous_char <= "\ud7a3"
+            and "\uac00" <= next_char <= "\ud7a3"
+            and not merged.rstrip().endswith((".", "!", "?", "。", ":"))
+        )
+        merged = f"{merged.rstrip()}{part.lstrip()}" if wrapped_korean_word else f"{merged.rstrip()}\n{part.lstrip()}"
+    return merged
+
+
+def _merge_side_badges_into_paragraphs(blocks: List[Dict]) -> List[Dict]:
+    """Attach small textbook role badges to the paragraph beside them."""
+    result = [dict(block) for block in blocks]
+    removed_ids = set()
+
+    for badge_index, badge in enumerate(result):
+        if badge["type"] not in {"title", "section_title", "caption", "footer"}:
+            continue
+        badge_text = badge.get("text", "").strip()
+        if len(badge_text.replace(" ", "")) > 16:
+            continue
+
+        bx1, by1, bx2, by2 = badge["bbox"]
+        badge_width = bx2 - bx1
+        badge_height = by2 - by1
+        badge_area = max(1, badge_width * badge_height)
+        candidates = []
+
+        for paragraph_index, paragraph in enumerate(result):
+            if paragraph_index == badge_index or paragraph["type"] != "paragraph":
+                continue
+            px1, py1, px2, py2 = paragraph["bbox"]
+            paragraph_width = px2 - px1
+            paragraph_height = py2 - py1
+            paragraph_area = max(1, paragraph_width * paragraph_height)
+            horizontal_gap = px1 - bx2
+            vertical_overlap = min(by2, py2) - max(by1, py1)
+            same_row = vertical_overlap / max(1, min(badge_height, paragraph_height)) >= 0.25
+            vertical_gap = py1 - by2
+            horizontal_overlap = min(bx2, px2) - max(bx1, px1)
+            directly_above = (
+                0 <= vertical_gap <= 40
+                and horizontal_overlap / max(1, badge_width) >= 0.25
+            )
+            contained_at_top = (
+                px1 - 24 <= bx1
+                and bx2 <= px2 + 24
+                and py1 - 20 <= by1
+                and by2 <= py1 + min(paragraph_height * 0.60, 120)
+            )
+            small_relative_to_paragraph = (
+                badge_area / paragraph_area <= 0.22
+                and badge_width <= paragraph_width * 0.40
+                and badge_height <= paragraph_height * 1.35
+            )
+            negative_gap_limit = -max(24, badge_width * 1.25)
+            beside_paragraph = same_row and negative_gap_limit <= horizontal_gap <= 90
+            if not small_relative_to_paragraph or not (beside_paragraph or directly_above or contained_at_top):
+                continue
+            distance = 0 if contained_at_top else vertical_gap if directly_above else abs(horizontal_gap) + abs(by1 - py1) * 0.25
+            candidates.append((distance, paragraph_index))
+
+        if not candidates:
+            continue
+
+        _, paragraph_index = min(candidates)
+        paragraph = result[paragraph_index]
+        px1, py1, px2, py2 = paragraph["bbox"]
+        paragraph["bbox"] = [min(bx1, px1), min(by1, py1), max(bx2, px2), max(by2, py2)]
+        if badge_text and badge_text not in paragraph.get("text", ""):
+            paragraph["text"] = "\n".join(part for part in [badge_text, paragraph.get("text", "")] if part).strip()
+
+        role_hint = _infer_role(badge_text)
+        context = dict(paragraph.get("context") or {})
+        context["label_source"] = "side_badge"
+        if badge_text:
+            context["label_text"] = badge_text
+        if role_hint != "normal":
+            context["role_hint"] = role_hint
+        paragraph["context"] = context
+        removed_ids.add(badge_index)
+
+    return [block for index, block in enumerate(result) if index not in removed_ids]
 
 
 def _classify_content_text(text: str) -> str:
