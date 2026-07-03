@@ -59,8 +59,7 @@ select {
 }
 
 .control-panel,
-.preview-pane,
-.json-pane {
+.result-workspace {
   background: #ffffff;
   border: 1px solid #d9dee3;
   border-radius: 8px;
@@ -211,12 +210,6 @@ select {
   padding-bottom: 7px;
 }
 
-.result-view {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
-}
-
 .pane-header {
   align-items: center;
   border-bottom: 1px solid #e3e8ed;
@@ -235,7 +228,7 @@ select {
   font-size: 13px;
 }
 
-.preview-pane img {
+.layout-view img {
   display: block;
   max-height: calc(100vh - 150px);
   object-fit: contain;
@@ -251,7 +244,7 @@ select {
   justify-content: center;
 }
 
-.json-pane pre {
+.json-view pre {
   background: #101820;
   color: #d7e4ef;
   font-size: 13px;
@@ -262,9 +255,233 @@ select {
   padding: 14px;
 }
 
+.result-workspace {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.view-tabs {
+  border-bottom: 1px solid #e3e8ed;
+  display: flex;
+  min-height: 48px;
+  overflow-x: auto;
+  padding: 0 12px;
+}
+
+.view-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #5c6872;
+  cursor: pointer;
+  padding: 0 16px;
+}
+
+.view-tabs button.active {
+  border-bottom-color: #2563eb;
+  color: #172026;
+  font-weight: 700;
+}
+
+.result-empty {
+  min-height: 650px;
+}
+
+.analysis-review {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  min-height: 650px;
+}
+
+.block-list {
+  border-right: 1px solid #e3e8ed;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+}
+
+.block-list button {
+  align-items: flex-start;
+  background: #f5f7f9;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #25323b;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  text-align: left;
+}
+
+.block-list button.active {
+  background: #eef4ff;
+  border-color: #7da2f4;
+}
+
+.block-list small,
+.muted {
+  color: #687681;
+}
+
+.review-detail {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 18px;
+}
+
+.review-section {
+  min-width: 0;
+}
+
+.review-section:first-child {
+  grid-row: span 2;
+}
+
+.review-section h3 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.block-crop {
+  background: #f5f7f9;
+  border: 1px solid #d9dee3;
+  display: block;
+  max-height: 440px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.metadata-row {
+  display: grid;
+  font-size: 13px;
+  gap: 6px 12px;
+  grid-template-columns: 1fr auto;
+  margin-top: 12px;
+}
+
+.pending-box,
+.warning-box {
+  border-radius: 6px;
+  line-height: 1.5;
+  padding: 12px;
+}
+
+.pending-box {
+  background: #f4f7f9;
+  color: #687681;
+}
+
+.warning-box {
+  background: #fff8e5;
+  border: 1px solid #ead28c;
+  color: #725b15;
+  grid-column: 1 / -1;
+}
+
+.formula-output {
+  background: #101820;
+  color: #d7e4ef;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
+.table-scroll {
+  overflow: auto;
+}
+
+.reconstructed-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+
+.reconstructed-table th,
+.reconstructed-table td {
+  border: 1px solid #aeb8c0;
+  padding: 7px;
+}
+
+.reconstructed-table th {
+  background: #edf2f6;
+}
+
+.result-fields {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.result-fields div {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 72px 1fr;
+}
+
+.result-fields dt {
+  color: #687681;
+}
+
+.result-fields dd {
+  margin: 0;
+}
+
+.description-output {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.description-output p {
+  line-height: 1.6;
+  margin: 4px 0 0;
+}
+
+.review-badge {
+  align-self: flex-start;
+  background: #edf1f4;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.review-badge.approved {
+  background: #e5f5eb;
+  color: #176534;
+}
+
+.review-badge.needs_review,
+.review-badge.rejected {
+  background: #fff1f1;
+  color: #9f1f1f;
+}
+
+.empty-state.compact {
+  min-height: 300px;
+}
+
 @media (max-width: 1040px) {
-  .workspace,
-  .result-view {
+  .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .analysis-review,
+  .review-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .block-list {
+    border-bottom: 1px solid #e3e8ed;
+    border-right: 0;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .review-section:first-child {
+    grid-row: auto;
   }
 }

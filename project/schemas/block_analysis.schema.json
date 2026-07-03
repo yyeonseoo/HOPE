@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hope.local/schemas/block_analysis.schema.json",
+  "title": "HOPE semantic block analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "page_id", "block_id", "type", "bbox", "detection", "analysis", "context", "warnings"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "page_id": { "type": "integer", "minimum": 1 },
+    "block_id": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["formula", "table", "figure"] },
+    "bbox": {
+      "type": "array",
+      "description": "Rendered-page pixel coordinates [x1, y1, x2, y2].",
+      "prefixItems": [
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "crop_path": { "type": ["string", "null"] },
+    "detection": { "$ref": "#/$defs/modelRun" },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "model", "confidence", "result"],
+      "properties": {
+        "status": { "enum": ["success", "partial", "failed"] },
+        "model": { "$ref": "#/$defs/modelIdentity" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/formulaResult" },
+            { "$ref": "#/$defs/tableResult" },
+            { "$ref": "#/$defs/figureResult" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previous_block_id", "next_block_id", "caption_block_id", "nearby_block_ids"],
+      "properties": {
+        "previous_block_id": { "type": ["string", "null"] },
+        "next_block_id": { "type": ["string", "null"] },
+        "caption_block_id": { "type": ["string", "null"] },
+        "nearby_block_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "description": { "$ref": "#/$defs/description" },
+    "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "formula" } } },
+      "then": {
+        "properties": {
+          "analysis": {
+            "properties": {
+              "result": { "oneOf": [{ "$ref": "#/$defs/formulaResult" }, { "type": "null" }] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "table" } } },
+      "then": {
+        "properties": {
+          "analysis": {
+            "properties": {
+              "result": { "oneOf": [{ "$ref": "#/$defs/tableResult" }, { "type": "null" }] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "figure" } } },
+      "then": {
+        "properties": {
+          "analysis": {
+            "properties": {
+              "result": { "oneOf": [{ "$ref": "#/$defs/figureResult" }, { "type": "null" }] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "analysis": { "properties": { "status": { "const": "failed" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "analysis": { "properties": { "result": { "type": "null" } } }
+        }
+      },
+      "else": {
+        "properties": {
+          "analysis": { "properties": { "result": { "not": { "type": "null" } } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "description": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "model", "short_text", "long_text", "transcription_notes", "context_used", "review_status"],
+      "properties": {
+        "status": { "enum": ["success", "partial", "failed", "not_started"] },
+        "model": {
+          "oneOf": [
+            { "$ref": "#/$defs/modelIdentity" },
+            { "type": "null" }
+          ]
+        },
+        "short_text": { "type": ["string", "null"] },
+        "long_text": { "type": ["string", "null"] },
+        "transcription_notes": { "type": ["string", "null"] },
+        "context_used": { "type": "boolean" },
+        "review_status": { "enum": ["unreviewed", "needs_review", "approved", "rejected"] }
+      }
+    },
+    "modelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": ["string", "null"] }
+      }
+    },
+    "modelRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "confidence"],
+      "properties": {
+        "model": { "$ref": "#/$defs/modelIdentity" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "formulaResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "latex", "mathml", "plain_text"],
+      "properties": {
+        "kind": { "const": "formula" },
+        "latex": { "type": ["string", "null"] },
+        "mathml": { "type": ["string", "null"] },
+        "plain_text": { "type": ["string", "null"] }
+      }
+    },
+    "tableResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "row_count", "column_count", "cells"],
+      "properties": {
+        "kind": { "const": "table" },
+        "row_count": { "type": "integer", "minimum": 0 },
+        "column_count": { "type": "integer", "minimum": 0 },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/tableCell" } }
+      }
+    },
+    "tableCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "column", "row_span", "column_span", "text", "is_header"],
+      "properties": {
+        "row": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "row_span": { "type": "integer", "minimum": 1 },
+        "column_span": { "type": "integer", "minimum": 1 },
+        "text": { "type": ["string", "null"] },
+        "is_header": { "type": "boolean" }
+      }
+    },
+    "figureResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "figure_type", "title", "x_axis", "y_axis", "series"],
+      "properties": {
+        "kind": { "const": "figure" },
+        "figure_type": { "enum": ["line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "illustration", "photo", "other", "unknown"] },
+        "title": { "type": ["string", "null"] },
+        "x_axis": { "$ref": "#/$defs/axis" },
+        "y_axis": { "$ref": "#/$defs/axis" },
+        "series": { "type": "array", "items": { "$ref": "#/$defs/series" } }
+      }
+    },
+    "axis": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["label", "unit"],
+      "properties": {
+        "label": { "type": ["string", "null"] },
+        "unit": { "type": ["string", "null"] }
+      }
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "points"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y"],
+            "properties": {
+              "x": { "type": ["string", "number", "null"] },
+              "y": { "type": ["string", "number", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -155,6 +155,7 @@ async def analyze_page(
         return {
             "page_count": page_count,
             "page": result["page"],
+            "semantic_analyses": [],
             "page_image": _image_data_url(result["page_image_path"]),
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],

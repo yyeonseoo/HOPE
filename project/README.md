@@ -50,6 +50,8 @@ PDF upload
 
 ```text
 project/
+├── schemas/
+│   └── block_analysis.schema.json
 ├── backend/
 │   └── app.py
 ├── data/
@@ -57,6 +59,10 @@ project/
 │   └── src/
 ├── outputs/
 ├── src/
+│   ├── analysis/
+│   │   ├── formula/
+│   │   ├── table/
+│   │   └── figure/
 │   ├── export_json.py
 │   ├── layout_detection.py
 │   ├── main.py
@@ -66,7 +72,12 @@ project/
 │   ├── pdf_to_image.py
 │   └── reading_order.py
 ├── tests/
+│   ├── formula/
+│   ├── table/
+│   ├── figure/
+│   ├── test_analysis_schema.py
 │   └── test_layout_postprocessing.py
+├── OWNERSHIP.md
 ├── requirements.txt
 ├── run_backend.ps1
 ├── run_frontend.ps1
@@ -108,6 +119,16 @@ powershell -ExecutionPolicy Bypass -File .\run_frontend.ps1
 ```
 
 브라우저에서 `http://127.0.0.1:5174`를 엽니다. PDF를 업로드하고 페이지 번호와 DPI를 입력한 뒤, `Layout model`에서 보정 규칙 적용 여부를 선택하고 `페이지 분석`을 누릅니다.
+
+결과 화면은 다음 탭으로 구성됩니다.
+
+- `Layout`: 전체 페이지의 레이아웃 탐지 시각화
+- `Formula`: 수식 crop, LaTeX/MathML 결과, confidence, 설명과 warning
+- `Table`: 표 crop, 복원된 셀 구조, confidence, 설명과 warning
+- `Figure`: 그림 crop, 유형·축·계열·데이터, 설명과 warning
+- `JSON`: 레이아웃과 의미 분석 결과 원문
+
+현재 API의 `semantic_analyses`는 빈 배열입니다. 각 담당 분석기가 구현되면 통합 담당자가 이 배열에 `schemas/block_analysis.schema.json` 형식의 결과를 연결합니다. 담당자는 프론트엔드를 직접 수정하지 않습니다.
 
 교과서 PDF는 웹에서 직접 업로드하므로 반드시 `data/`에 넣을 필요는 없습니다. CLI로 전체 PDF를 처리할 때는 `project/data/` 사용을 권장합니다.
 
@@ -182,3 +203,75 @@ cd C:\Users\USER\HOPE\project
 - `formula` 탐지는 수식 영역의 위치를 찾는 단계입니다. 현재 일반 OCR의 `text`는 분수, 위첨자, 아래첨자 구조를 정확히 보존하지 못할 수 있습니다. 수식을 의미 구조로 사용하려면 formula crop에 수식 전용 OCR을 적용해 LaTeX 또는 MathML 필드를 추가해야 합니다.
 - `figure`는 현재 영역만 탐지하며 그래프나 그림에 대한 자연어 설명은 생성하지 않습니다. 이후 figure crop, 주변 caption/paragraph, 비전 모델을 결합하는 단계가 필요합니다.
 - 어떤 범용 모델도 모든 교과서에서 누락 0건을 보장하지는 않습니다. 다른 출판사와 과목으로 일반화하려면 다양한 페이지의 정답 라벨과 정량 평가가 필요합니다.
+
+## Semantic Analysis Contract
+
+역할별 파일 소유권과 병렬 작업 규칙은 `OWNERSHIP.md`를 따릅니다.
+
+수식, 표, 그림 분석기는 반드시 `schemas/block_analysis.schema.json`을 준수해야 합니다. 이 스키마는 기존 레이아웃 JSON을 대체하지 않으며, 탐지된 `formula`, `table`, `figure` 블록에 대한 후속 의미 분석 결과를 정의합니다.
+
+공통 규칙:
+
+- `schema_version`은 현재 `1.0.0`입니다. 호환되지 않는 변경은 버전을 올리고 팀 합의를 거쳐야 합니다.
+- `bbox`는 렌더링된 페이지의 픽셀 좌표 `[x1, y1, x2, y2]`입니다.
+- `type`은 `formula`, `table`, `figure` 중 하나입니다.
+- `analysis.status`는 `success`, `partial`, `failed` 중 하나입니다.
+- confidence는 `0.0` 이상 `1.0` 이하이며, 모델이 제공하지 않으면 `null`입니다.
+- 탐지 confidence와 의미 분석 confidence는 서로 다른 값이며 합산하지 않습니다.
+- 알 수 없는 값은 빈 문자열이나 추정값 대신 `null`로 기록합니다.
+- 모델 이름과 버전을 기록하며, 버전을 알 수 없으면 `null`을 사용합니다.
+- 일부 값만 인식했으면 `partial`과 `warnings`를 사용합니다. 값을 추측해서 채우지 않습니다.
+- `crop_path`는 선택 사항입니다. `page_id`와 `bbox`로 crop을 재생성할 수 있어야 합니다.
+- 앞뒤 본문과 캡션은 `context`에 블록 ID로 연결합니다.
+- 유형별 결과는 `analysis.result`에 저장하며 `kind`는 바깥쪽 `type`과 같아야 합니다.
+
+유형별 결과:
+
+- `formula`: LaTeX, MathML, 일반 텍스트를 구분해 저장합니다.
+- `table`: 행·열 수, 셀 위치, 헤더 여부, `row_span`, `column_span`을 저장합니다.
+- `figure`: 그림 유형, 제목, 축, 단위, 계열과 데이터 점을 저장합니다. 읽지 못한 수치를 만들어 내지 않습니다.
+- `description`: 의미 분석과 분리된 선택 영역입니다. 짧은 설명, 상세 설명, 점역 참고, 문맥 사용 여부와 검수 상태를 저장합니다.
+
+분석 결과 예시:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "page_id": 15,
+  "block_id": "p15_b4",
+  "type": "formula",
+  "bbox": [105, 329, 745, 426],
+  "crop_path": "crops/p15_b4.png",
+  "detection": {
+    "model": {"name": "DocLayout-YOLO", "version": null},
+    "confidence": 0.94
+  },
+  "analysis": {
+    "status": "success",
+    "model": {"name": "PP-FormulaNet", "version": "server"},
+    "confidence": 0.88,
+    "result": {
+      "kind": "formula",
+      "latex": "\\frac{f(b)-f(a)}{b-a}",
+      "mathml": null,
+      "plain_text": null
+    }
+  },
+  "context": {
+    "previous_block_id": "p15_b3",
+    "next_block_id": "p15_b5",
+    "caption_block_id": null,
+    "nearby_block_ids": ["p15_b3", "p15_b5"]
+  },
+  "warnings": []
+}
+```
+
+스키마 검증:
+
+```powershell
+cd C:\Users\USER\HOPE\project
+.\.venv\Scripts\python.exe -m unittest tests.test_analysis_schema -v
+```
+
+에이전트와 작업할 때는 이 README와 스키마를 먼저 읽도록 요청합니다. 공통 계약 변경은 기능 구현과 분리된 PR에서 세 명의 합의를 거쳐 진행합니다.
