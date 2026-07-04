@@ -109,16 +109,30 @@ def _table_cell_area(table_res: Dict) -> float:
     cell_boxes = table_res.get("cell_box_list") or []
     if not cell_boxes:
         return 0.0
-    xs = [point[0] for box in cell_boxes for point in _as_points(box)]
-    ys = [point[1] for box in cell_boxes for point in _as_points(box)]
-    if not xs or not ys:
+    points = [_as_points(box) for box in cell_boxes]
+    points = [p for p in points if p.size]
+    if not points:
         return 0.0
-    return (max(xs) - min(xs)) * (max(ys) - min(ys))
+    all_points = np.concatenate(points, axis=0)
+    xs, ys = all_points[:, 0], all_points[:, 1]
+    return float((xs.max() - xs.min()) * (ys.max() - ys.min()))
 
 
-def _as_points(box):
-    # cell boxes may be flat [x1, y1, x2, y2] or four (x, y) corner points
-    if len(box) == 4 and all(isinstance(value, (int, float)) for value in box):
-        x1, y1, x2, y2 = box
-        return [(x1, y1), (x2, y2)]
-    return box
+def _as_points(box) -> np.ndarray:
+    """Normalize one cell box into an (N, 2) ndarray of (x, y) points.
+
+    PaddleX's cell_box_list entries are numpy arrays, either a flat
+    [x1, y1, x2, y2] (size 4) or four (x, y) corner points (size 8 once
+    flattened) — shape, not element dtype, is what distinguishes them. An
+    earlier version checked `isinstance(value, (int, float))`, which is
+    False for numpy scalar dtypes (float32/int64/...), so real model output
+    always fell through to the wrong branch and crashed with "invalid index
+    to scalar variable" once a box happened to be the flat 4-number form.
+    """
+    flat = np.asarray(box, dtype=float).reshape(-1)
+    if flat.size == 0:
+        return flat.reshape(0, 2)
+    if flat.size == 4:
+        x1, y1, x2, y2 = flat
+        return np.array([[x1, y1], [x2, y2]])
+    return flat.reshape(-1, 2)
