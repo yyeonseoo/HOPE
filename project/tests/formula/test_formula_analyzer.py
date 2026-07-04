@@ -174,6 +174,29 @@ class TestFormulaAnalyzer(unittest.TestCase):
             result["warnings"],
         )
 
+    def test_recognize_formula_common_textbook_patterns(self):
+        cases = [
+            ("y=2x", "y=2x"),
+            ("y=-2x", "y=-2x"),
+            ("y=ax (단, a는 0이 아니다.)", "y=ax"),
+            ("a>0", "a>0"),
+            ("a<0", "a<0"),
+            ("y=6/x", "y=6/x"),
+            ("y = 4 / x", "y=4/x"),
+            ("y=;2!;x", r"y=\frac{1}{2}x"),
+            ("y=;3@;x", r"y=\frac{2}{3}x"),
+        ]
+
+        for input_text, expected_latex in cases:
+            with self.subTest(input_text=input_text):
+                result = recognize_formula_from_crop(
+                    crop_path=None,
+                    fallback_text=input_text,
+                )
+
+                self.assertEqual(result["latex"], expected_latex)
+                self.assertEqual(result["mathml"], None)
+
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")
         self.assertEqual(normalize_formula_text("y ÷ x"), r"y\divx")

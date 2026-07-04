@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -139,6 +140,7 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
     for source, target in replacements.items():
         cleaned = cleaned.replace(source, target)
 
+    cleaned = normalize_fraction_artifacts(cleaned)
     cleaned = cleaned.strip()
 
     if not cleaned:
@@ -146,6 +148,39 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
 
     return cleaned
 
+def normalize_fraction_artifacts(text: str) -> str:
+    """
+    교과서 OCR에서 자주 깨지는 분수 표기를 LaTeX 형태로 보정한다.
+
+    예:
+    y=;2!;x -> y=\\frac{1}{2}x
+    """
+
+    # ;2!; -> \frac{1}{2}
+    text = re.sub(r";(\d+)!;", r"\\frac{1}{\1}", text)
+
+    # ;3@; -> \frac{2}{3}, ;4#; -> \frac{3}{4} 형태 확장
+    numerator_map = {
+        "!": "1",
+        "@": "2",
+        "#": "3",
+        "$": "4",
+        "%": "5",
+    }
+
+    def replace_special_fraction(match: re.Match) -> str:
+        denominator = match.group(1)
+        numerator_symbol = match.group(2)
+        numerator = numerator_map.get(numerator_symbol)
+
+        if numerator is None:
+            return match.group(0)
+
+        return rf"\frac{{{numerator}}}{{{denominator}}}"
+
+    text = re.sub(r";(\d+)([!@#$%]);", replace_special_fraction, text)
+
+    return text
 
 def convert_latex_to_mathml(latex: Optional[str]) -> Optional[str]:
     """
