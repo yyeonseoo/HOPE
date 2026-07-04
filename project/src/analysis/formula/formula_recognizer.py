@@ -25,7 +25,13 @@ def recognize_formula_from_crop(
         if not crop_file.exists():
             warnings.append(f"Formula crop file does not exist: {crop_path}")
 
-    latex = normalize_latex_candidate(fallback_text)
+    plain_text = normalize_plain_text(fallback_text)
+
+    if plain_text is not None and not contains_formula_signal(plain_text):
+        warnings.append("Detected formula block does not contain a formula-like expression.")
+        latex = None
+    else:
+        latex = normalize_latex_candidate(plain_text)
 
     if latex is None:
         warnings.append("Formula LaTeX could not be recognized from crop or fallback text.")
@@ -35,7 +41,7 @@ def recognize_formula_from_crop(
     return {
         "latex": latex,
         "mathml": mathml,
-        "plain_text": fallback_text.strip() if isinstance(fallback_text, str) and fallback_text.strip() else latex,
+        "plain_text": plain_text if plain_text is not None else latex,
         "confidence": None,
         "model": {
             "name": "formula-recognizer-fallback",
@@ -44,6 +50,61 @@ def recognize_formula_from_crop(
         "warnings": warnings,
     }
 
+def normalize_plain_text(text: Optional[str]) -> Optional[str]:
+    """
+    fallback text를 사람이 읽을 수 있는 형태로 정리한다.
+    """
+
+    if text is None:
+        return None
+
+    cleaned = str(text).strip()
+
+    if not cleaned:
+        return None
+
+    cleaned = " ".join(cleaned.split())
+
+    if not cleaned:
+        return None
+
+    return cleaned
+
+
+def contains_formula_signal(text: str) -> bool:
+    """
+    텍스트가 실제 수식 관계식인지 대략 판단한다.
+
+    예:
+    - y=ax → True
+    - y=-2x → True
+    - a>0 → True
+    - ⑴ -2, -1, 0, 1, 2 / ⑵ 수 전체 → False
+    """
+
+    compact = text.replace(" ", "")
+
+    formula_signals = [
+        "=",
+        "<",
+        ">",
+        "≤",
+        "≥",
+        "≠",
+        "^",
+        "√",
+        r"\frac",
+    ]
+
+    if any(signal in compact for signal in formula_signals):
+        return True
+
+    # a/x, 6/x 같은 반비례식 후보
+    if "/" in compact and any(variable in compact for variable in ["x", "y", "a", "b"]):
+        return True
+
+    # y2, x1 같은 단순 변수+숫자만으로는 부족하므로 여기서는 제외
+    return False
 
 def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
     """

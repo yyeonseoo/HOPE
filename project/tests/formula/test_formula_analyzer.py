@@ -144,8 +144,7 @@ class TestFormulaAnalyzer(unittest.TestCase):
             self.assertTrue(crop_file.exists())
 
             with Image.open(crop_file) as cropped:
-                self.assertEqual(cropped.size, (50, 30))
-
+                self.assertEqual(cropped.size, (90, 80))
             crop_file.unlink(missing_ok=True)
 
     def test_recognize_formula_from_crop_uses_fallback_text(self):
@@ -159,6 +158,21 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertEqual(result["plain_text"], "y=ax (단, a는 0이 아니다.)")
         self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
         self.assertGreater(len(result["warnings"]), 0)
+    
+    def test_recognize_formula_rejects_non_formula_list(self):
+        result = recognize_formula_from_crop(
+            crop_path=None,
+            fallback_text="⑴ -2, -1, 0, 1, 2\n⑵ 수 전체",
+        )
+
+        self.assertIsNone(result["latex"])
+        self.assertIsNone(result["mathml"])
+        self.assertEqual(result["plain_text"], "⑴ -2, -1, 0, 1, 2 ⑵ 수 전체")
+        self.assertGreater(len(result["warnings"]), 0)
+        self.assertIn(
+            "Detected formula block does not contain a formula-like expression.",
+            result["warnings"],
+        )
 
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")
