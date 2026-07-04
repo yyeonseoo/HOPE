@@ -44,7 +44,7 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertEqual(result["analysis"]["status"], "success")
         self.assertEqual(result["analysis"]["result"]["kind"], "formula")
         self.assertEqual(result["analysis"]["result"]["latex"], "y=ax")
-        self.assertEqual(result["analysis"]["result"]["plain_text"], "y=ax")
+        self.assertEqual(result["analysis"]["result"]["plain_text"], "y = ax")
 
         self.assertEqual(result["context"]["previous_block_id"], "p9_b1")
         self.assertIsNone(result["context"]["next_block_id"])
@@ -70,6 +70,44 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertEqual(results[0]["analysis"]["status"], "partial")
         self.assertIsNone(results[0]["analysis"]["result"]["latex"])
         self.assertGreater(len(results[0]["warnings"]), 0)
+
+    def test_parse_formula_with_condition_text(self):
+        page = {
+            "page_id": 9,
+            "blocks": [
+                {
+                    "block_id": "p9_b2",
+                    "type": "paragraph",
+                    "bbox": [286, 168, 875, 195],
+                    "text": "일반적으로 x와 y가 정비례할 때, x와 y 사이에는 다음과 같은 식이 성립한다.",
+                    "score": 0.856,
+                    "detector": "doclayout_yolo",
+                },
+                {
+                    "block_id": "p9_b3",
+                    "type": "formula",
+                    "bbox": [469, 213, 683, 240],
+                    "text": "y=ax (단, a는 0이 아니다.)",
+                    "score": 0.584,
+                    "detector": "doclayout_yolo",
+                },
+            ],
+        }
+
+        results = analyze_formula_blocks(page)
+
+        self.assertEqual(len(results), 1)
+
+        result = results[0]
+        self.assertEqual(result["page_id"], 9)
+        self.assertEqual(result["block_id"], "p9_b3")
+        self.assertEqual(result["type"], "formula")
+        self.assertEqual(result["analysis"]["status"], "success")
+        self.assertEqual(result["analysis"]["result"]["latex"], "y=ax")
+        self.assertEqual(
+            result["analysis"]["result"]["plain_text"],
+            "y=ax (단, a는 0이 아니다.)",
+        )
 
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")

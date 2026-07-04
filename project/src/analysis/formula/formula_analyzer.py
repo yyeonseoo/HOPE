@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional
 
 
@@ -47,7 +48,10 @@ def analyze_single_formula_block(
     """
 
     raw_text = block.get("text")
-    latex = normalize_formula_text(raw_text)
+    formula_info = parse_formula_text(raw_text)
+
+    latex = formula_info["latex"]
+    plain_text = formula_info["plain_text"]
 
     status = "success" if latex else "partial"
     warnings = []
@@ -83,7 +87,7 @@ def analyze_single_formula_block(
                 "kind": "formula",
                 "latex": latex,
                 "mathml": None,
-                "plain_text": latex,
+                "plain_text": plain_text,
             },
         },
         "context": {
@@ -99,6 +103,61 @@ def analyze_single_formula_block(
         "warnings": warnings,
     }
 
+def parse_formula_text(text: Optional[str]) -> Dict[str, Optional[str]]:
+    """
+    Model A가 준 formula text에서 실제 수식 부분과 설명 문장을 분리한다.
+
+    예:
+    "y=ax (단, a는 0이 아니다.)"
+    -> latex: "y=ax"
+    -> plain_text: "y=ax (단, a는 0이 아니다.)"
+    """
+
+    if text is None:
+        return {
+            "latex": None,
+            "plain_text": None,
+        }
+
+    plain_text = normalize_plain_text(text)
+
+    if not plain_text:
+        return {
+            "latex": None,
+            "plain_text": None,
+        }
+
+    formula_part = plain_text
+
+    for separator in ["(단", "（단", "( 단", "단,"]:
+        if separator in formula_part:
+            formula_part = formula_part.split(separator)[0]
+            break
+
+    latex = normalize_formula_text(formula_part)
+
+    return {
+        "latex": latex,
+        "plain_text": plain_text,
+    }
+
+
+def normalize_plain_text(text: Optional[str]) -> Optional[str]:
+    """
+    OCR 결과에 섞인 특수 공백과 줄바꿈을 일반 텍스트로 정리한다.
+    """
+
+    if text is None:
+        return None
+
+    cleaned = str(text)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.strip()
+
+    if not cleaned:
+        return None
+
+    return cleaned
 
 def normalize_formula_text(text: Optional[str]) -> Optional[str]:
     """
