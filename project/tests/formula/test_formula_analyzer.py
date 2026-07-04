@@ -7,7 +7,7 @@ from src.analysis.formula.formula_analyzer import (
     crop_formula_block,
     normalize_formula_text,
 )
-
+from src.analysis.formula.formula_recognizer import recognize_formula_from_crop
 
 class TestFormulaAnalyzer(unittest.TestCase):
     def test_analyze_formula_blocks_returns_only_formula_results(self):
@@ -148,12 +148,23 @@ class TestFormulaAnalyzer(unittest.TestCase):
 
             crop_file.unlink(missing_ok=True)
 
+    def test_recognize_formula_from_crop_uses_fallback_text(self):
+        result = recognize_formula_from_crop(
+            crop_path=None,
+            fallback_text="y=ax (단, a는 0이 아니다.)",
+        )
+
+        self.assertEqual(result["latex"], "y=ax")
+        self.assertIsNone(result["mathml"])
+        self.assertEqual(result["plain_text"], "y=ax (단, a는 0이 아니다.)")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertGreater(len(result["warnings"]), 0)
+
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")
         self.assertEqual(normalize_formula_text("y ÷ x"), r"y\divx")
         self.assertEqual(normalize_formula_text(""), None)
         self.assertEqual(normalize_formula_text(None), None)
-
 
 if __name__ == "__main__":
     unittest.main()

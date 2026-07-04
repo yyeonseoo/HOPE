@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .formula_recognizer import recognize_formula_from_crop
 
 def analyze_formula_blocks(
     page: Dict[str, Any],
@@ -50,15 +51,7 @@ def analyze_single_formula_block(
 
     raw_text = block.get("text")
     formula_info = parse_formula_text(raw_text)
-
-    latex = formula_info["latex"]
     plain_text = formula_info["plain_text"]
-
-    status = "success" if latex else "partial"
-    warnings = []
-
-    if not latex:
-        warnings.append("Formula text was not available from Model A output.")
 
     previous_block_id = get_neighbor_block_id(blocks, block_index - 1)
     next_block_id = get_neighbor_block_id(blocks, block_index + 1)
@@ -68,6 +61,29 @@ def analyze_single_formula_block(
         block=block,
         page_id=page_id,
     )
+
+    recognition = recognize_formula_from_crop(
+        crop_path=crop_path,
+        fallback_text=plain_text,
+    )
+
+    latex = recognition.get("latex")
+    mathml = recognition.get("mathml")
+    plain_text = recognition.get("plain_text")
+    analysis_confidence = recognition.get("confidence")
+    analysis_model = recognition.get(
+        "model",
+        {
+            "name": "formula-analysis",
+            "version": None,
+        },
+    )
+
+    status = "success" if latex else "partial"
+    warnings = recognition.get("warnings", [])
+
+    if not latex and "Formula text was not available from Model A output." not in warnings:
+        warnings.append("Formula text was not available from Model A output.")
 
     return {
         "schema_version": "1.0.0",
@@ -85,15 +101,12 @@ def analyze_single_formula_block(
         },
         "analysis": {
             "status": status,
-            "model": {
-                "name": "formula-analysis",
-                "version": None,
-            },
-            "confidence": None,
+            "model": analysis_model,
+            "confidence": analysis_confidence,
             "result": {
                 "kind": "formula",
                 "latex": latex,
-                "mathml": None,
+                "mathml": mathml,
                 "plain_text": plain_text,
             },
         },
