@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -62,13 +63,19 @@ def analyze_single_formula_block(
     previous_block_id = get_neighbor_block_id(blocks, block_index - 1)
     next_block_id = get_neighbor_block_id(blocks, block_index + 1)
 
+    crop_path = crop_formula_block(
+        page_image_path=page_image_path,
+        block=block,
+        page_id=page_id,
+    )
+
     return {
         "schema_version": "1.0.0",
         "page_id": page_id,
         "block_id": block.get("block_id"),
         "type": "formula",
         "bbox": block.get("bbox"),
-        "crop_path": None,
+        "crop_path": crop_path,
         "detection": {
             "model": {
                 "name": block.get("detector", "model-a"),
@@ -158,6 +165,63 @@ def normalize_plain_text(text: Optional[str]) -> Optional[str]:
         return None
 
     return cleaned
+
+def crop_formula_block(
+    page_image_path: Optional[str],
+    block: Dict[str, Any],
+    page_id: Optional[int],
+) -> Optional[str]:
+    """
+    Model A가 제공한 bbox를 이용해 페이지 이미지에서 formula 영역을 crop한다.
+
+    page_image_path가 없으면 crop을 만들 수 없으므로 None을 반환한다.
+    """
+
+    if not page_image_path:
+        return None
+
+    bbox = block.get("bbox")
+    block_id = block.get("block_id")
+
+    if not bbox or len(bbox) != 4 or not block_id:
+        return None
+
+    image_path = Path(page_image_path)
+
+    if not image_path.exists():
+        return None
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+
+    x1, y1, x2, y2 = [int(value) for value in bbox]
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    output_dir = Path("outputs") / "crops" / "formula"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_page_id = page_id if page_id is not None else "unknown"
+    output_path = output_dir / f"p{safe_page_id}_{block_id}.png"
+
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+        x1 = max(0, min(x1, width))
+        x2 = max(0, min(x2, width))
+        y1 = max(0, min(y1, height))
+        y2 = max(0, min(y2, height))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        cropped = image.crop((x1, y1, x2, y2))
+        cropped.save(output_path)
+
+    return str(output_path).replace("\\", "/")
 
 def normalize_formula_text(text: Optional[str]) -> Optional[str]:
     """

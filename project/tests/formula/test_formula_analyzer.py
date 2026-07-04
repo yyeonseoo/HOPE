@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from src.analysis.formula.formula_analyzer import (
     analyze_formula_blocks,
+    crop_formula_block,
     normalize_formula_text,
 )
 
@@ -108,6 +111,42 @@ class TestFormulaAnalyzer(unittest.TestCase):
             result["analysis"]["result"]["plain_text"],
             "y=ax (단, a는 0이 아니다.)",
         )
+
+    def test_crop_formula_block_creates_image_file(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is not installed.")
+
+        with TemporaryDirectory() as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            page_image_path = temp_dir_path / "page9.png"
+
+            image = Image.new("RGB", (100, 100), "white")
+            image.save(page_image_path)
+
+            block = {
+                "block_id": "p9_b3",
+                "type": "formula",
+                "bbox": [10, 20, 60, 50],
+                "text": "y=ax",
+            }
+
+            crop_path = crop_formula_block(
+                page_image_path=str(page_image_path),
+                block=block,
+                page_id=9,
+            )
+
+            self.assertIsNotNone(crop_path)
+
+            crop_file = Path(crop_path)
+            self.assertTrue(crop_file.exists())
+
+            with Image.open(crop_file) as cropped:
+                self.assertEqual(cropped.size, (50, 30))
+
+            crop_file.unlink(missing_ok=True)
 
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")
