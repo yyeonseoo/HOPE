@@ -214,6 +214,12 @@ def crop_formula_block(
     if x2 <= x1 or y2 <= y1:
         return None
 
+    padding = 30
+    x1 -= padding
+    y1 -= padding
+    x2 += padding
+    y2 += padding
+
     output_dir = Path("outputs") / "crops" / "formula"
     output_dir.mkdir(parents=True, exist_ok=True)
 
