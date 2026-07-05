@@ -174,6 +174,52 @@ class TestFormulaAnalyzer(unittest.TestCase):
             result["warnings"],
         )
 
+    def test_recognize_formula_rejects_axis_or_unit_labels(self):
+        cases = [
+            "x(m/s)",
+            "y(원)",
+            "y(km)",
+            "시간(초)",
+            "거리(km)",
+            "(m/s)",
+            "(km)",
+        ]
+
+        for input_text in cases:
+            with self.subTest(input_text=input_text):
+                result = recognize_formula_from_crop(
+                    crop_path=None,
+                    fallback_text=input_text,
+                )
+
+                self.assertEqual(result["latex"], None)
+                self.assertEqual(result["mathml"], None)
+                self.assertIn(
+                    "Detected formula block does not contain a formula-like expression.",
+                    result["warnings"],
+                )
+
+    def test_recognize_formula_rejects_table_like_noise(self):
+        cases = [
+            "x(m/s) 10 20 30 40 50 60 y(초)",
+            "x 10 20 30 40 50 60 y 480 240 160 120 96 80",
+            "0 1 2 3 4 5 6 x(톤) 0 y(만 원)",
+        ]
+
+        for input_text in cases:
+            with self.subTest(input_text=input_text):
+                result = recognize_formula_from_crop(
+                    crop_path=None,
+                    fallback_text=input_text,
+                )
+
+                self.assertEqual(result["latex"], None)
+                self.assertEqual(result["mathml"], None)
+                self.assertIn(
+                    "Detected formula block does not contain a formula-like expression.",
+                    result["warnings"],
+                )
+
     def test_recognize_formula_common_textbook_patterns(self):
         cases = [
             ("y=2x", "y=2x"),
@@ -194,6 +240,8 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("⑴ y=4x ⑵ y=-3x", "y=4x;y=-3x"),
             ("(1) y=4x (2) y=-3x", "y=4x;y=-3x"),
             ("⑴ y=8/x ⑵ y=-8/x", "y=8/x;y=-8/x"),
+            ("y=ax의 그래프", "y=ax"),
+            ("y=ax`", "y=ax"),
         ]
 
         for input_text, expected_latex in cases:

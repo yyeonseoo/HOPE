@@ -71,6 +71,42 @@ def normalize_plain_text(text: Optional[str]) -> Optional[str]:
 
     return cleaned
 
+def is_axis_or_unit_label(text: str) -> bool:
+    """
+    그래프 축 라벨이나 단위 표기는 수식 분석 대상에서 제외한다.
+
+    예:
+    x(m/s), y(원), y(km), 시간(초), 거리(km)
+    """
+
+    axis_or_unit_patterns = [
+        r"^[xy]\([a-zA-Z가-힣/]+\)$",
+        r"^[가-힣]+\([a-zA-Z가-힣/]+\)$",
+        r"^\([a-zA-Z가-힣/]+\)$",
+    ]
+
+    return any(re.fullmatch(pattern, text) for pattern in axis_or_unit_patterns)
+
+def is_table_like_formula_noise(text: str) -> bool:
+    """
+    표, 그래프 축, 숫자 나열이 formula block으로 잡힌 경우 제외한다.
+
+    예:
+    x(m/s)102030405060y(초)
+    x102030405060x(m/s)4800y(초)48002401601209680x
+    """
+
+    has_equation_signal = any(signal in text for signal in ["=", "<", ">", "≤", "≥", "≠"])
+
+    if has_equation_signal:
+        return False
+
+    numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", text)
+
+    if len(numbers) >= 5:
+        return True
+
+    return False
 
 def contains_formula_signal(text: str) -> bool:
     """
@@ -85,6 +121,12 @@ def contains_formula_signal(text: str) -> bool:
 
     compact = text.replace(" ", "")
 
+    if is_axis_or_unit_label(compact):
+        return False
+    
+    if is_table_like_formula_noise(text):
+        return False
+    
     formula_signals = [
         "=",
         "<",
@@ -152,6 +194,7 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
 
     cleaned = cleaned.replace(" ", "")
     cleaned = remove_formula_prefix(cleaned)
+    cleaned = remove_formula_suffix(cleaned)
     cleaned = normalize_fraction_artifacts(cleaned)
     cleaned = cleaned.strip()
 
@@ -187,6 +230,21 @@ def remove_formula_prefix(text: str) -> str:
     # 구분자 정리
     text = re.sub(r";+", ";", text)
     text = text.strip(";")
+
+    return text
+
+def remove_formula_suffix(text: str) -> str:
+    """
+    수식 뒤에 붙은 설명 문구나 OCR 잡음을 제거한다.
+
+    예:
+    y=ax의그래프 -> y=ax
+    y=ax` -> y=ax
+    """
+
+    text = re.sub(r"`+$", "", text)
+    text = re.sub(r"의그래프.*$", "", text)
+    text = re.sub(r"그래프.*$", "", text)
 
     return text
 
