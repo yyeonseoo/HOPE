@@ -163,15 +163,30 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
 def remove_formula_prefix(text: str) -> str:
     """
     교과서 문항 번호나 설명 접두어가 수식 앞에 붙은 경우 제거한다.
+    여러 수식이 한 블록에 붙어 있으면 중간 문항 번호를 구분자로 바꾼다.
 
     예:
     ⑴y=4x -> y=4x
     ⑵y=-3x -> y=-3x
     식y=800x -> y=800x
+    ⑴y=4x⑵y=-3x -> y=4x;y=-3x
+    (1)y=4x(2)y=-3x -> y=4x;y=-3x
     """
 
+    # 맨 앞 문항 번호 제거
     text = re.sub(r"^[⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]", "", text)
+    text = re.sub(r"^\((?:1|2|3|4|5|6|7|8|9|10)\)(?=[a-zA-Z가-힣])", "", text)
+
+    # 중간 문항 번호는 수식 구분자로 변환
+    text = re.sub(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]", ";", text)
+    text = re.sub(r"\((?:1|2|3|4|5|6|7|8|9|10)\)(?=[a-zA-Z가-힣])", ";", text)
+
+    # 설명 접두어 제거
     text = re.sub(r"^식(?=[a-zA-Z가-힣]*=)", "", text)
+
+    # 구분자 정리
+    text = re.sub(r";+", ";", text)
+    text = text.strip(";")
 
     return text
 

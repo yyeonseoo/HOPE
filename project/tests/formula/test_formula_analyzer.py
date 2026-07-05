@@ -191,6 +191,9 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("⑴ y=4x", "y=4x"),
             ("⑵ y=-3x", "y=-3x"),
             ("식 y=800x", "y=800x"),
+            ("⑴ y=4x ⑵ y=-3x", "y=4x;y=-3x"),
+            ("(1) y=4x (2) y=-3x", "y=4x;y=-3x"),
+            ("⑴ y=8/x ⑵ y=-8/x", "y=8/x;y=-8/x"),
         ]
 
         for input_text, expected_latex in cases:
