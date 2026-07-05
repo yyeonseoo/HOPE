@@ -2,7 +2,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .formula_recognizer import recognize_formula_from_crop
+from .formula_recognizer import (
+    recognize_formula_from_crop,
+    generate_formula_description,
+)
 
 def analyze_formula_blocks(
     page: Dict[str, Any],
@@ -70,6 +73,9 @@ def analyze_single_formula_block(
     latex = recognition.get("latex")
     mathml = recognition.get("mathml")
     plain_text = recognition.get("plain_text")
+
+    description = generate_formula_description(latex)
+    
     analysis_confidence = recognition.get("confidence")
     analysis_model = recognition.get(
         "model",
@@ -110,6 +116,7 @@ def analyze_single_formula_block(
                 "plain_text": plain_text,
             },
         },
+        "description": description,
         "context": {
             "previous_block_id": previous_block_id,
             "next_block_id": next_block_id,

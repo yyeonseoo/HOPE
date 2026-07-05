@@ -10,6 +10,7 @@ from src.analysis.formula.formula_analyzer import (
 from src.analysis.formula.formula_recognizer import (
     recognize_formula_from_crop,
     convert_latex_to_mathml,
+    generate_formula_description,
 )
 
 class TestFormulaAnalyzer(unittest.TestCase):
@@ -284,6 +285,19 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertEqual(normalize_formula_text("y ÷ x"), r"y\divx")
         self.assertEqual(normalize_formula_text(""), None)
         self.assertEqual(normalize_formula_text(None), None)
+    
+    def test_generate_formula_description(self):
+        result = generate_formula_description("y=4x")
+
+        self.assertEqual(result["status"], "generated")
+        self.assertIn("y", result["short_text"])
+        self.assertIn("x", result["short_text"])
+        self.assertEqual(result["review_status"], "auto")
+
+        empty_result = generate_formula_description(None)
+
+        self.assertEqual(empty_result["status"], "not_started")
+        self.assertIsNone(empty_result["short_text"])
 
 if __name__ == "__main__":
     unittest.main()

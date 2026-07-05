@@ -404,3 +404,84 @@ def convert_math_token_to_mathml(token: str) -> str:
         return f"<mn>{token}</mn>"
 
     return f"<mi>{token}</mi>"
+
+def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
+    """
+    수식 LaTeX를 바탕으로 접근성 설명을 생성한다.
+    스크린리더/점역 참고용으로 사용할 수 있는 기본 설명이다.
+    """
+
+    if latex is None:
+        return {
+            "status": "not_started",
+            "short_text": None,
+            "long_text": None,
+            "transcription_notes": None,
+            "review_status": "auto",
+        }
+
+    if ";" in latex:
+        parts = [part for part in latex.split(";") if part]
+        readable_parts = ", ".join(parts)
+
+        return {
+            "status": "generated",
+            "short_text": f"여러 개의 수식입니다: {readable_parts}",
+            "long_text": f"이 영역에는 {len(parts)}개의 수식이 포함되어 있습니다. 각각 {readable_parts} 입니다.",
+            "transcription_notes": "여러 수식은 세미콜론으로 구분하여 점역합니다.",
+            "review_status": "auto",
+        }
+
+    if latex.startswith("(") and latex.endswith(")") and "," in latex:
+        return {
+            "status": "generated",
+            "short_text": f"좌표 또는 순서쌍 {latex}입니다.",
+            "long_text": f"{latex}는 괄호 안에 두 값을 쉼표로 구분하여 나타낸 좌표 또는 순서쌍입니다.",
+            "transcription_notes": "괄호, 쉼표, 각 항을 순서대로 점역합니다.",
+            "review_status": "auto",
+        }
+
+    fraction_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d+)/([a-zA-Z])", latex)
+
+    if fraction_match:
+        left = fraction_match.group(1)
+        numerator = fraction_match.group(2)
+        denominator = fraction_match.group(3)
+
+        return {
+            "status": "generated",
+            "short_text": f"{left}는 {numerator}를 {denominator}로 나눈 값입니다.",
+            "long_text": f"수식 {latex}는 {left}가 {numerator} 나누기 {denominator}와 같다는 의미입니다.",
+            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역합니다.",
+            "review_status": "auto",
+        }
+
+    linear_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d*|[a-zA-Z])([a-zA-Z])", latex)
+
+    if linear_match:
+        left = linear_match.group(1)
+        coefficient = linear_match.group(2)
+        variable = linear_match.group(3)
+
+        if coefficient in ["", "+"]:
+            coefficient_text = ""
+        elif coefficient == "-":
+            coefficient_text = "음수 "
+        else:
+            coefficient_text = f"{coefficient}배 "
+
+        return {
+            "status": "generated",
+            "short_text": f"{left}는 {variable}의 {coefficient_text}값입니다.",
+            "long_text": f"수식 {latex}는 {left}가 {variable}에 {coefficient or '1'}을 곱한 값과 같다는 의미입니다.",
+            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하여 점역합니다.",
+            "review_status": "auto",
+        }
+
+    return {
+        "status": "generated",
+        "short_text": f"수식 {latex}입니다.",
+        "long_text": f"인식된 수식은 {latex}입니다.",
+        "transcription_notes": "자동 생성 설명이므로 검토가 필요합니다.",
+        "review_status": "auto",
+    }
