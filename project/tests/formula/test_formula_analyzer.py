@@ -185,6 +185,12 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("y = 4 / x", "y=4/x"),
             ("y=;2!;x", r"y=\frac{1}{2}x"),
             ("y=;3@;x", r"y=\frac{2}{3}x"),
+            ("(1, a)", "(1,a)"),
+            ("(x, y)", "(x,y)"),
+            ("(-2, -4)", "(-2,-4)"),
+            ("⑴ y=4x", "y=4x"),
+            ("⑵ y=-3x", "y=-3x"),
+            ("식 y=800x", "y=800x"),
         ]
 
         for input_text, expected_latex in cases:

@@ -103,6 +103,16 @@ def contains_formula_signal(text: str) -> bool:
     # a/x, 6/x 같은 반비례식 후보
     if "/" in compact and any(variable in compact for variable in ["x", "y", "a", "b"]):
         return True
+    
+    # (1,a), (-2,-4), (x,y) 같은 좌표/순서쌍 표현
+    if re.fullmatch(r"\([+-]?[0-9.]+,[a-zA-Z가-힣]\)", compact):
+        return True
+
+    if re.fullmatch(r"\([a-zA-Z가-힣],[a-zA-Z가-힣]\)", compact):
+        return True
+
+    if re.fullmatch(r"\([+-]?[0-9.]+,[+-]?[0-9.]+\)", compact):
+        return True
 
     # y2, x1 같은 단순 변수+숫자만으로는 부족하므로 여기서는 제외
     return False
@@ -140,6 +150,8 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
     for source, target in replacements.items():
         cleaned = cleaned.replace(source, target)
 
+    cleaned = cleaned.replace(" ", "")
+    cleaned = remove_formula_prefix(cleaned)
     cleaned = normalize_fraction_artifacts(cleaned)
     cleaned = cleaned.strip()
 
@@ -147,6 +159,21 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
         return None
 
     return cleaned
+
+def remove_formula_prefix(text: str) -> str:
+    """
+    교과서 문항 번호나 설명 접두어가 수식 앞에 붙은 경우 제거한다.
+
+    예:
+    ⑴y=4x -> y=4x
+    ⑵y=-3x -> y=-3x
+    식y=800x -> y=800x
+    """
+
+    text = re.sub(r"^[⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]", "", text)
+    text = re.sub(r"^식(?=[a-zA-Z가-힣]*=)", "", text)
+
+    return text
 
 def normalize_fraction_artifacts(text: str) -> str:
     """
