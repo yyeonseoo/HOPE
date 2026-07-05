@@ -7,7 +7,10 @@ from src.analysis.formula.formula_analyzer import (
     crop_formula_block,
     normalize_formula_text,
 )
-from src.analysis.formula.formula_recognizer import recognize_formula_from_crop
+from src.analysis.formula.formula_recognizer import (
+    recognize_formula_from_crop,
+    convert_latex_to_mathml,
+)
 
 class TestFormulaAnalyzer(unittest.TestCase):
     def test_analyze_formula_blocks_returns_only_formula_results(self):
@@ -154,7 +157,9 @@ class TestFormulaAnalyzer(unittest.TestCase):
         )
 
         self.assertEqual(result["latex"], "y=ax")
-        self.assertIsNone(result["mathml"])
+        self.assertIsNotNone(result["mathml"])
+        self.assertIn("<math>", result["mathml"])
+        self.assertIn("</math>", result["mathml"])        
         self.assertEqual(result["plain_text"], "y=ax (단, a는 0이 아니다.)")
         self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
         self.assertGreater(len(result["warnings"]), 0)
@@ -252,7 +257,27 @@ class TestFormulaAnalyzer(unittest.TestCase):
                 )
 
                 self.assertEqual(result["latex"], expected_latex)
-                self.assertEqual(result["mathml"], None)
+                self.assertTrue(
+                    result["mathml"] is None or result["mathml"].startswith("<math>")
+                )    
+    def test_convert_latex_to_mathml_for_common_patterns(self):
+        cases = [
+            "y=ax",
+            "y=4x",
+            "y=-3x",
+            "y=8/x",
+            "(1,a)",
+            "(-2,-4)",
+            "y=4x;y=-3x",
+        ]
+
+        for latex in cases:
+            with self.subTest(latex=latex):
+                mathml = convert_latex_to_mathml(latex)
+
+                self.assertIsNotNone(mathml)
+                self.assertIn("<math>", mathml)
+                self.assertIn("</math>", mathml)
 
     def test_normalize_formula_text(self):
         self.assertEqual(normalize_formula_text(" y = 2 × x "), r"y=2\timesx")

@@ -284,13 +284,123 @@ def normalize_fraction_artifacts(text: str) -> str:
 
 def convert_latex_to_mathml(latex: Optional[str]) -> Optional[str]:
     """
-    LaTeX를 MathML로 변환한다.
+    간단한 교과서 수식을 MathML 문자열로 변환한다.
+    실제 수식 인식 모델 연결 전까지 사용하는 기본 변환기이다.
 
-    현재는 외부 변환 라이브러리를 연결하지 않았기 때문에 None을 반환한다.
-    이후 latex2mathml 같은 라이브러리를 도입하면 이 함수 내부를 교체하면 된다.
+    지원 예:
+    y=ax
+    y=4x
+    y=-3x
+    y=8/x
+    y=4x;y=-3x
     """
 
     if latex is None:
         return None
 
+    formulas = [part for part in latex.split(";") if part]
+
+    if not formulas:
+        return None
+
+    mathml_parts = []
+
+    for formula in formulas:
+        formula_mathml = convert_single_formula_to_mathml(formula)
+
+        if formula_mathml is None:
+            return None
+
+        mathml_parts.append(formula_mathml)
+
+    joined = "<mo>;</mo>".join(mathml_parts)
+
+    return f"<math><mrow>{joined}</mrow></math>"
+
+def convert_single_formula_to_mathml(formula: str) -> Optional[str]:
+    """
+    단일 수식을 간단한 MathML mrow로 변환한다.
+    """
+
+    formula = formula.strip()
+
+    if not formula:
+        return None
+
+    # 좌표/순서쌍: (1,a), (-2,-4), (x,y)
+    coordinate_match = re.fullmatch(
+        r"\(([+-]?[0-9.]+|[a-zA-Z가-힣]),([+-]?[0-9.]+|[a-zA-Z가-힣])\)",
+        formula,
+    )
+
+    if coordinate_match:
+        left = convert_math_token_to_mathml(coordinate_match.group(1))
+        right = convert_math_token_to_mathml(coordinate_match.group(2))
+
+        return (
+            "<mrow>"
+            "<mo>(</mo>"
+            f"{left}"
+            "<mo>,</mo>"
+            f"{right}"
+            "<mo>)</mo>"
+            "</mrow>"
+        )
+
+    # y=8/x 형태
+    fraction_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d+)/([a-zA-Z])", formula)
+
+    if fraction_match:
+        left = fraction_match.group(1)
+        numerator = fraction_match.group(2)
+        denominator = fraction_match.group(3)
+
+        return (
+            "<mrow>"
+            f"<mi>{left}</mi>"
+            "<mo>=</mo>"
+            "<mfrac>"
+            f"<mn>{numerator}</mn>"
+            f"<mi>{denominator}</mi>"
+            "</mfrac>"
+            "</mrow>"
+        )
+
+    # y=ax, y=4x, y=-3x 형태
+    linear_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d*|[a-zA-Z])([a-zA-Z])", formula)
+
+    if linear_match:
+        left = linear_match.group(1)
+        coefficient = linear_match.group(2)
+        variable = linear_match.group(3)
+
+        coefficient_mathml = ""
+
+        if coefficient and coefficient not in ["+", "-"]:
+            if re.fullmatch(r"[+-]?\d+", coefficient):
+                coefficient_mathml = f"<mn>{coefficient}</mn>"
+            else:
+                coefficient_mathml = f"<mi>{coefficient}</mi>"
+        elif coefficient == "-":
+            coefficient_mathml = "<mo>-</mo>"
+
+        return (
+            "<mrow>"
+            f"<mi>{left}</mi>"
+            "<mo>=</mo>"
+            f"{coefficient_mathml}"
+            f"<mi>{variable}</mi>"
+            "</mrow>"
+        )
+
     return None
+
+def convert_math_token_to_mathml(token: str) -> str:
+    """
+    숫자/문자 토큰을 MathML 태그로 변환한다.
+    """
+
+    if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", token):
+        return f"<mn>{token}</mn>"
+
+    return f"<mi>{token}</mi>"
