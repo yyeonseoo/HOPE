@@ -28,6 +28,24 @@ def recognize_formula_from_crop(
 
     plain_text = normalize_plain_text(fallback_text)
 
+    model_result = recognize_with_optional_pix2tex(crop_path)
+
+    if model_result is not None:
+        latex = normalize_latex_candidate(model_result)
+
+        if latex is not None:
+            return {
+                "latex": latex,
+                "mathml": convert_latex_to_mathml(latex),
+                "plain_text": plain_text,
+                "confidence": None,
+                "model": {
+                    "name": "pix2tex",
+                    "version": None,
+                },
+                "warnings": [],
+            }
+        
     if plain_text is not None and not contains_formula_signal(plain_text):
         warnings.append("Detected formula block does not contain a formula-like expression.")
         latex = None
@@ -51,6 +69,38 @@ def recognize_formula_from_crop(
         "warnings": warnings,
     }
 
+def recognize_with_optional_pix2tex(crop_path: Optional[str]) -> Optional[str]:
+    """
+    pix2tex가 설치되어 있고 crop 이미지가 있으면 이미지 기반 LaTeX 인식을 시도한다.
+    설치되어 있지 않거나 실패하면 None을 반환하여 기존 fallback 로직을 사용하게 한다.
+    """
+
+    if crop_path is None:
+        return None
+
+    image_path = Path(crop_path)
+
+    if not image_path.exists():
+        return None
+
+    try:
+        from PIL import Image
+        from pix2tex.cli import LatexOCR
+    except Exception:
+        return None
+
+    try:
+        model = LatexOCR()
+        image = Image.open(image_path)
+        result = model(image)
+
+        if not result:
+            return None
+
+        return str(result).strip()
+    except Exception:
+        return None
+    
 def normalize_plain_text(text: Optional[str]) -> Optional[str]:
     """
     fallback text를 사람이 읽을 수 있는 형태로 정리한다.
