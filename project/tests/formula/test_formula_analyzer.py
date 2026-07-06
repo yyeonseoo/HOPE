@@ -4,17 +4,47 @@ from tempfile import TemporaryDirectory
 
 from src.analysis.formula.formula_analyzer import (
     analyze_formula_blocks,
-    crop_formula_block,
+    parse_formula_text,
     normalize_formula_text,
+    crop_formula_block,
 )
+
 from src.analysis.formula.formula_recognizer import (
     recognize_formula_from_crop,
     convert_latex_to_mathml,
     generate_formula_description,
-    is_reliable_model_latex
+    is_reliable_model_latex,
+    extract_formula_from_model_latex,
 )
 
 class TestFormulaAnalyzer(unittest.TestCase):
+    def test_extract_formula_from_noisy_pix2tex_output(self):
+        noisy_positive_fraction = (
+            r"\begin{array}{c}{{\sim\uparrow}}\\ "
+            r"{{(1)\:y=\frac{8}{x}}}\end{array}"
+        )
+
+        noisy_negative_fraction = (
+            r"(\mathbf{\partial}_{(2)}\bigcup_{y=-{\frac{8}{x}}}"
+        )
+
+        noisy_other_fraction = r"\bigcup_{y=-{\frac{3}{t}}}"
+
+        self.assertEqual(
+            extract_formula_from_model_latex(noisy_other_fraction),
+            r"y=-\frac{3}{t}",
+        )
+
+        self.assertEqual(
+            extract_formula_from_model_latex(noisy_positive_fraction),
+            r"y=\frac{8}{x}",
+        )
+
+        self.assertEqual(
+            extract_formula_from_model_latex(noisy_negative_fraction),
+            r"y=-\frac{8}{x}",
+        )
+
     def test_analyze_formula_blocks_returns_only_formula_results(self):
         page = {
             "page_id": 9,
@@ -274,6 +304,9 @@ class TestFormulaAnalyzer(unittest.TestCase):
             r"y=\frac{1}{2}x",
             r"y=\frac{2}{3}x",
             r"y=\frac{8}{x}",
+            r"y=-\frac{8}{x}",
+            r"y=\frac{12}{5}",
+            r"y=\frac{a}{x}",
         ]
 
         for latex in cases:

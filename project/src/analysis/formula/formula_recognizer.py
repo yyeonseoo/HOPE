@@ -30,21 +30,24 @@ def recognize_formula_from_crop(
 
     model_result = recognize_with_optional_pix2tex(crop_path)
 
-    if model_result is not None and is_reliable_model_latex(model_result):
-        latex = normalize_latex_candidate(model_result)
+    if model_result is not None:
+        extracted_model_result = extract_formula_from_model_latex(model_result)
 
-        if latex is not None:
-            return {
-                "latex": latex,
-                "mathml": convert_latex_to_mathml(latex),
-                "plain_text": plain_text,
-                "confidence": None,
-                "model": {
-                    "name": "pix2tex",
-                    "version": None,
-                },
-                "warnings": [],
-            }
+        if extracted_model_result is not None and is_reliable_model_latex(extracted_model_result):
+            latex = normalize_latex_candidate(extracted_model_result)
+
+            if latex is not None:
+                return {
+                    "latex": latex,
+                    "mathml": convert_latex_to_mathml(latex),
+                    "plain_text": plain_text,
+                    "confidence": None,
+                    "model": {
+                        "name": "pix2tex",
+                        "version": None,
+                    },
+                    "warnings": [],
+                }
         
     if plain_text is not None and not contains_formula_signal(plain_text):
         warnings.append("Detected formula block does not contain a formula-like expression.")
@@ -100,6 +103,77 @@ def recognize_with_optional_pix2tex(crop_path: Optional[str]) -> Optional[str]:
         return str(result).strip()
     except Exception:
         return None
+
+def extract_formula_from_model_latex(model_latex: str) -> Optional[str]:
+    """
+    pix2tex 결과가 array, subscript, 장식 명령 등을 포함하더라도
+    그 안에서 실제 교과서 수식으로 보이는 부분만 추출한다.
+
+    예:
+    \\begin{array} ... (1) y=\\frac{8}{x} ... \\end{array}
+    -> y=\\frac{8}{x}
+
+    \\bigcup_{y=-{\\frac{8}{x}}}
+    -> y=-\\frac{8}{x}
+    """
+
+    if not model_latex:
+        return None
+
+    text = model_latex.replace(" ", "")
+
+    # y=-{\frac{8}{x}} 또는 y={\frac{8}{x}} 형태
+    braced_fraction_match = re.search(
+        r"([a-zA-Z])=([+-]?)\{?\\frac\{([^{}]+)\}\{([^{}]+)\}\}?",
+        text,
+    )
+
+    if braced_fraction_match:
+        left = braced_fraction_match.group(1)
+        sign = braced_fraction_match.group(2)
+        numerator = braced_fraction_match.group(3)
+        denominator = braced_fraction_match.group(4)
+
+        return rf"{left}={sign}\frac{{{numerator}}}{{{denominator}}}"
+
+    # y=-{\frac{8}{x}} 처럼 음수 부호 뒤에 중괄호 분수가 오는 형태
+    negative_braced_fraction_match = re.search(
+        r"([a-zA-Z])=-\{\\frac\{([^{}]+)\}\{([^{}]+)\}\}",
+        text,
+    )
+
+    if negative_braced_fraction_match:
+        left = negative_braced_fraction_match.group(1)
+        numerator = negative_braced_fraction_match.group(2)
+        denominator = negative_braced_fraction_match.group(3)
+
+        return rf"{left}=-\frac{{{numerator}}}{{{denominator}}}"
+
+    # y=\frac{8}{x} 형태
+    fraction_match = re.search(
+        r"([a-zA-Z])=([+-]?)\\frac\{([^{}]+)\}\{([^{}]+)\}",
+        text,
+    )
+
+    if fraction_match:
+        left = fraction_match.group(1)
+        sign = fraction_match.group(2)
+        numerator = fraction_match.group(3)
+        denominator = fraction_match.group(4)
+
+        return rf"{left}={sign}\frac{{{numerator}}}{{{denominator}}}"
+
+    # y=4x, y=-3x, y=ax 형태
+    linear_match = re.search(r"([a-zA-Z])=([+-]?\d*|[a-zA-Z])([a-zA-Z])", text)
+
+    if linear_match:
+        left = linear_match.group(1)
+        coefficient = linear_match.group(2)
+        variable = linear_match.group(3)
+
+        return f"{left}={coefficient}{variable}"
+
+    return model_latex
 
 def is_reliable_model_latex(latex: str) -> bool:
     """
@@ -460,11 +534,36 @@ def convert_single_formula_to_mathml(formula: str) -> Optional[str]:
             "</mrow>"
         )
 
-    # y=\frac{8}{x}, y=\frac{a}{x} 형태
+    # y=\frac{8}{x}, y=-\frac{8}{x}, y=\frac{a}{x} 형태
     inverse_fraction_match = re.fullmatch(
-        r"([a-zA-Z])=\\frac\{([^{}]+)\}\{([^{}]+)\}",
+        r"([a-zA-Z])=([+-]?)\\frac\{([^{}]+)\}\{([^{}]+)\}",
         formula,
     )
+
+    if inverse_fraction_match:
+        left = inverse_fraction_match.group(1)
+        sign = inverse_fraction_match.group(2)
+        numerator = inverse_fraction_match.group(3)
+        denominator = inverse_fraction_match.group(4)
+
+        sign_mathml = ""
+
+        if sign == "-":
+            sign_mathml = "<mo>-</mo>"
+        elif sign == "+":
+            sign_mathml = "<mo>+</mo>"
+
+        return (
+            "<mrow>"
+            f"<mi>{left}</mi>"
+            "<mo>=</mo>"
+            f"{sign_mathml}"
+            "<mfrac>"
+            f"{convert_math_token_to_mathml(numerator)}"
+            f"{convert_math_token_to_mathml(denominator)}"
+            "</mfrac>"
+            "</mrow>"
+        )
 
     if inverse_fraction_match:
         left = inverse_fraction_match.group(1)
