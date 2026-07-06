@@ -30,7 +30,7 @@ def recognize_formula_from_crop(
 
     model_result = recognize_with_optional_pix2tex(crop_path)
 
-    if model_result is not None:
+    if model_result is not None and is_reliable_model_latex(model_result):
         latex = normalize_latex_candidate(model_result)
 
         if latex is not None:
@@ -100,7 +100,46 @@ def recognize_with_optional_pix2tex(crop_path: Optional[str]) -> Optional[str]:
         return str(result).strip()
     except Exception:
         return None
-    
+
+def is_reliable_model_latex(latex: str) -> bool:
+    """
+    이미지 기반 수식 인식 모델 결과가 지나치게 복잡하거나 잡음이 많으면 사용하지 않는다.
+    불안정한 모델 결과는 fallback text 기반 후처리로 넘긴다.
+    """
+
+    if not latex:
+        return False
+
+    compact = latex.replace(" ", "")
+
+    # 너무 긴 결과는 작은 수식 crop에서 나온 결과로 보기 어렵다.
+    if len(compact) > 80:
+        return False
+
+    suspicious_tokens = [
+        r"\stackrel",
+        r"\operatorname",
+        r"\mathsf",
+        r"\scriptscriptstyle",
+        r"\textstyle",
+        r"\underline",
+        r"\emptyset",
+        r"\Phi",
+        r"\odot",
+        r"\subseteq",
+    ]
+
+    if any(token in compact for token in suspicious_tokens):
+        return False
+
+    # 간단한 교과서 수식에서 LaTeX 명령이 과도하게 많이 나오면 잡음 가능성이 높다.
+    latex_command_count = len(re.findall(r"\\[a-zA-Z]+", compact))
+
+    if latex_command_count >= 4:
+        return False
+
+    return True
+
 def normalize_plain_text(text: Optional[str]) -> Optional[str]:
     """
     fallback text를 사람이 읽을 수 있는 형태로 정리한다.

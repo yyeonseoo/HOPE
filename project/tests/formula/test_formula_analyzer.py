@@ -11,6 +11,7 @@ from src.analysis.formula.formula_recognizer import (
     recognize_formula_from_crop,
     convert_latex_to_mathml,
     generate_formula_description,
+    is_reliable_model_latex
 )
 
 class TestFormulaAnalyzer(unittest.TestCase):
@@ -301,6 +302,16 @@ class TestFormulaAnalyzer(unittest.TestCase):
 
         self.assertEqual(empty_result["status"], "not_started")
         self.assertIsNone(empty_result["short_text"])
+
+    def test_rejects_unreliable_pix2tex_output(self):
+        bad_latex = (
+            r"y{\stackrel{\ldots}{=}}d{\bf{x}}"
+            r"\operatorname{c}\mathsf{cl}\scriptscriptstyle"
+        )
+
+        self.assertFalse(is_reliable_model_latex(bad_latex))
+        self.assertTrue(is_reliable_model_latex("y=ax"))
+        self.assertTrue(is_reliable_model_latex(r"y=\frac{1}{2}x"))
 
 if __name__ == "__main__":
     unittest.main()
