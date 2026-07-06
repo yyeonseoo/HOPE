@@ -1,0 +1,92 @@
+[
+  {
+    "id": "eval_001",
+    "input_text": "y=ax (단, a는 0이 아니다.)",
+    "expected_latex": "y=ax",
+    "case_type": "linear_formula"
+  },
+  {
+    "id": "eval_002",
+    "input_text": "⑴ y=4x",
+    "expected_latex": "y=4x",
+    "case_type": "numbered_formula"
+  },
+  {
+    "id": "eval_003",
+    "input_text": "⑵ y=-3x",
+    "expected_latex": "y=-3x",
+    "case_type": "numbered_formula"
+  },
+  {
+    "id": "eval_004",
+    "input_text": "⑴ y=4x ⑵ y=-3x",
+    "expected_latex": "y=4x;y=-3x",
+    "case_type": "multiple_formulas"
+  },
+  {
+    "id": "eval_005",
+    "input_text": "⑴ y=8x ⑵ y=-8x",
+    "expected_latex": "y=8x;y=-8x",
+    "case_type": "multiple_formulas"
+  },
+  {
+    "id": "eval_006",
+    "input_text": "(1, a)",
+    "expected_latex": "(1,a)",
+    "case_type": "coordinate"
+  },
+  {
+    "id": "eval_007",
+    "input_text": "(-2, -4)",
+    "expected_latex": "(-2,-4)",
+    "case_type": "coordinate"
+  },
+  {
+    "id": "eval_008",
+    "input_text": "식 y=800x",
+    "expected_latex": "y=800x",
+    "case_type": "prefix_noise"
+  },
+  {
+    "id": "eval_009",
+    "input_text": "y=ax의 그래프",
+    "expected_latex": "y=ax",
+    "case_type": "suffix_noise"
+  },
+  {
+    "id": "eval_010",
+    "input_text": "x(m/s)",
+    "expected_latex": null,
+    "case_type": "axis_label_noise"
+  },
+  {
+    "id": "eval_011",
+    "input_text": "시간(초)",
+    "expected_latex": null,
+    "case_type": "axis_label_noise"
+  },
+  {
+    "id": "eval_012",
+    "input_text": "x(m/s) 10 20 30 40 50 60 y(초)",
+    "expected_latex": null,
+    "case_type": "table_like_noise"
+  },
+  {
+    "id": "eval_013",
+    "input_text": "0 1 2 3 4 5 6 x(톤) 0 y(만 원)",
+    "expected_latex": null,
+    "case_type": "table_like_noise"
+  },
+  {
+    "id": "eval_014",
+    "input_text": "y=;2!;x",
+    "expected_latex": "y=\\frac{1}{2}x",
+    "case_type": "fraction_ocr_artifact"
+  },
+  {
+    "id": "eval_015",
+    "input_text": "y=;3@;x",
+    "expected_latex": "y=\\frac{2}{3}x",
+    "case_type": "fraction_ocr_artifact"
+  }
+]
