@@ -23,12 +23,25 @@ def analyze_pdf_vector_figure(
 ) -> dict[str, Any]:
     """Analyze a born-digital PDF figure without OCR or raster heuristics."""
     evidence = extract_vector_evidence(pdf_path, page_number, bbox, dpi)
-    x_label, y_label = infer_axis_labels(evidence["words"])
-    series = infer_visual_series(evidence["paths"], evidence["words"])
-    figure_type = "line_chart" if series and (x_label or y_label) else "diagram"
+    from .router import classify_figure_route
+
+    route = classify_figure_route(evidence)
+    evidence["route"] = route
+    x_label, y_label = route["x_axis_label"], route["y_axis_label"]
+    graph_paths = [
+        evidence["paths"][index]
+        for index in route.get("usable_path_indices", [])
+        if 0 <= index < len(evidence["paths"])
+    ]
+    series = (
+        infer_visual_series(graph_paths, evidence["words"], excluded_labels={x_label, y_label})
+        if route["route_type"] == "graph"
+        else []
+    )
+    figure_type = "line_chart" if route["route_type"] == "graph" else "illustration"
 
     analysis = {
-        "status": "success" if series else "partial",
+        "status": "success" if route["route_type"] == "graph" and series else "partial",
         "model": {"name": "pymupdf-vector-parser", "version": fitz.VersionBind},
         "confidence": None,
         "result": {
@@ -41,10 +54,10 @@ def analyze_pdf_vector_figure(
         },
     }
     warnings = []
-    if not series:
+    if route["route_type"] == "image":
+        warnings.append("Figure was routed to image; graph interpretation was skipped.")
+    elif not series:
         warnings.append("PDF vector paths did not contain a readable data series.")
-    if not x_label or not y_label:
-        warnings.append("One or more axis labels were not identified from PDF text positions.")
 
     record = {
         "schema_version": "1.0.0",
@@ -66,7 +79,19 @@ def analyze_pdf_vector_figure(
         },
         "warnings": warnings,
     }
-    record["description"] = build_vector_description(analysis, series)
+    record["description"] = (
+        build_vector_description(analysis, series)
+        if route["route_type"] == "graph"
+        else {
+            "status": "not_started",
+            "model": None,
+            "short_text": None,
+            "long_text": None,
+            "transcription_notes": "이미지 해석 모델로 전달해야 합니다.",
+            "context_used": False,
+            "review_status": "unreviewed",
+        }
+    )
     return {"record": record, "evidence": evidence}
 
 
@@ -135,8 +160,14 @@ def infer_axis_labels(words: list[Mapping[str, Any]]) -> tuple[str | None, str |
 def infer_visual_series(
     paths: list[Mapping[str, Any]],
     words: list[Mapping[str, Any]],
+    excluded_labels: set[str | None] | None = None,
 ) -> list[dict[str, Any]]:
-    labels = [item for item in words if _series_label(item.get("text"))]
+    excluded = {str(item).strip() for item in (excluded_labels or set()) if item}
+    labels = [
+        item
+        for item in words
+        if _series_label(item.get("text")) and str(item.get("text")).strip() not in excluded
+    ]
     output = []
     for index, path in enumerate(paths, start=1):
         points = path.get("points") if isinstance(path.get("points"), list) else []

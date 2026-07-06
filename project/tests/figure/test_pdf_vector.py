@@ -7,6 +7,7 @@ import fitz
 from src.analysis.figure.pdf_vector import (
     analyze_pdf_vector_figure,
     infer_axis_labels,
+    infer_visual_series,
     summarize_path_trend,
 )
 
@@ -42,6 +43,14 @@ class PDFVectorFigureTests(unittest.TestCase):
             {"x": 1.0, "y": 0.8},
         ]
         self.assertEqual(summarize_path_trend(points), ["증가", "일정", "증가"])
+
+    def test_axis_labels_are_not_reused_as_series_names(self):
+        paths = [{"points": [{"x": 0.0, "y": 0.0}, {"x": 0.8, "y": 0.8}], "color": [0, 1, 0]}]
+        words = [{"text": "시간", "x": 0.82, "y": 0.18}]
+
+        series = infer_visual_series(paths, words, excluded_labels={"시간", "거리"})
+
+        self.assertEqual(series[0]["name"], "계열 1")
 
     def test_synthetic_vector_chart_generates_context_free_description(self):
         with tempfile.TemporaryDirectory() as tmp:
