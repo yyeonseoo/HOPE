@@ -270,6 +270,9 @@ class TestFormulaAnalyzer(unittest.TestCase):
             "(1,a)",
             "(-2,-4)",
             "y=4x;y=-3x",
+            r"y=\frac{1}{2}x",
+            r"y=\frac{2}{3}x",
+            r"y=\frac{8}{x}",
         ]
 
         for latex in cases:

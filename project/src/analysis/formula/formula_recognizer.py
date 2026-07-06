@@ -397,6 +397,52 @@ def convert_single_formula_to_mathml(formula: str) -> Optional[str]:
             "</mrow>"
         )
 
+    # y=\frac{1}{2}x, y=\frac{2}{3}x 형태
+    coefficient_fraction_match = re.fullmatch(
+        r"([a-zA-Z])=\\frac\{([^{}]+)\}\{([^{}]+)\}([a-zA-Z])",
+        formula,
+    )
+
+    if coefficient_fraction_match:
+        left = coefficient_fraction_match.group(1)
+        numerator = coefficient_fraction_match.group(2)
+        denominator = coefficient_fraction_match.group(3)
+        variable = coefficient_fraction_match.group(4)
+
+        return (
+            "<mrow>"
+            f"<mi>{left}</mi>"
+            "<mo>=</mo>"
+            "<mfrac>"
+            f"{convert_math_token_to_mathml(numerator)}"
+            f"{convert_math_token_to_mathml(denominator)}"
+            "</mfrac>"
+            f"<mi>{variable}</mi>"
+            "</mrow>"
+        )
+
+    # y=\frac{8}{x}, y=\frac{a}{x} 형태
+    inverse_fraction_match = re.fullmatch(
+        r"([a-zA-Z])=\\frac\{([^{}]+)\}\{([^{}]+)\}",
+        formula,
+    )
+
+    if inverse_fraction_match:
+        left = inverse_fraction_match.group(1)
+        numerator = inverse_fraction_match.group(2)
+        denominator = inverse_fraction_match.group(3)
+
+        return (
+            "<mrow>"
+            f"<mi>{left}</mi>"
+            "<mo>=</mo>"
+            "<mfrac>"
+            f"{convert_math_token_to_mathml(numerator)}"
+            f"{convert_math_token_to_mathml(denominator)}"
+            "</mfrac>"
+            "</mrow>"
+        )
+    
     # y=8/x 형태
     fraction_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d+)/([a-zA-Z])", formula)
 
