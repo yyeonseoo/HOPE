@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+import numpy as np
+
+from .formula_cells import merge_formula_cell_ocr
 from .html_parser import grid_dimensions, parse_html_table
 
 
@@ -9,6 +12,7 @@ def build_table_analysis(
     raw_result: Optional[Dict],
     model_name: str,
     model_version: Optional[str] = None,
+    table_crop: Optional[np.ndarray] = None,
 ) -> Dict:
     """Normalize one engine's raw table-recognition output into the
     `analysis` object defined by schemas/block_analysis.schema.json (plus a
@@ -24,6 +28,15 @@ def build_table_analysis(
     model itself (not the upstream layout detector) and are always recorded,
     even on failure, so downstream consumers know which model produced/failed
     to produce this analysis.
+
+    `table_crop`, if given, enables the cell-level formula-OCR merge step
+    (formula_cells.merge_formula_cell_ocr): cells whose general-OCR text
+    looks like a mangled formula get re-recognized from their own
+    sub-image via feature/formula-analysis's crop-based recognizer, and the
+    merged text (not the raw OCR text) is what ends up in the returned
+    `cells`. Omit it (the default) to keep the original, formula-OCR-free
+    behavior -- e.g. when `raw_result` didn't carry a `cell_box_list` to
+    crop from in the first place.
     """
     model = {"name": model_name, "version": model_version}
     warnings: List[str] = []
@@ -40,7 +53,8 @@ def build_table_analysis(
             "warnings": ["표 영역을 인식하지 못했습니다."],
         }
 
-    cells = parse_html_table(html)
+    cell_box_list = (raw_result or {}).get("cell_box_list")
+    cells = parse_html_table(html, cell_box_list=cell_box_list)
     if not cells:
         return {
             "analysis": {
@@ -51,6 +65,9 @@ def build_table_analysis(
             },
             "warnings": ["표 HTML을 셀 구조로 파싱하지 못했습니다."],
         }
+
+    if table_crop is not None:
+        cells = merge_formula_cell_ocr(cells, table_crop)
 
     row_count, column_count = grid_dimensions(cells)
     missing_text_cells = [cell for cell in cells if not cell["text"]]
