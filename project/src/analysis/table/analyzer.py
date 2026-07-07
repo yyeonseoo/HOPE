@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .crop import crop_and_save_table_block, crop_table_image
+from .description import generate_table_description
 from .engine import MODEL_NAME, MODEL_VERSION, _load_table_engine, run_table_engine
 from .normalize import build_table_analysis
 
@@ -74,6 +75,7 @@ def _analyze_single_table_block(
             "confidence": block.get("score"),
         },
         "analysis": output["analysis"],
+        "description": generate_table_description(output["analysis"]),
         "context": {
             "previous_block_id": previous_block_id,
             "next_block_id": next_block_id,
