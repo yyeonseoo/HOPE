@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 from ocr import _load_paddleocr
 from pdf_text import extract_pdf_text_lines
 from page_pipeline import process_single_page
-
+from analysis.formula.formula_analyzer import analyze_formula_blocks
 
 app = FastAPI(title="Textbook Layout Parser API")
 
@@ -152,10 +152,15 @@ async def analyze_page(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
 
+        semantic_analyses = analyze_formula_blocks(
+            result["page"],
+            page_image_path=result["page_image_path"],
+        )
+
         return {
             "page_count": page_count,
             "page": result["page"],
-            "semantic_analyses": [],
+            "semantic_analyses": semantic_analyses,
             "page_image": _image_data_url(result["page_image_path"]),
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],
