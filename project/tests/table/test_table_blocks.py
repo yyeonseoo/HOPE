@@ -64,7 +64,12 @@ class AnalyzeTableBlocksTests(unittest.TestCase):
                         "kind": "table",
                         "row_count": 2,
                         "column_count": 2,
-                        "cells": [],
+                        "cells": [
+                            {"row": 0, "column": 0, "row_span": 1, "column_span": 1, "text": "1", "is_header": False},
+                            {"row": 0, "column": 1, "row_span": 1, "column_span": 1, "text": "2", "is_header": False},
+                            {"row": 1, "column": 0, "row_span": 1, "column_span": 1, "text": "3", "is_header": False},
+                            {"row": 1, "column": 1, "row_span": 1, "column_span": 1, "text": "4", "is_header": False},
+                        ],
                     },
                 },
                 "warnings": [],
@@ -99,6 +104,55 @@ class AnalyzeTableBlocksTests(unittest.TestCase):
         self.assertEqual(results[0]["analysis"]["status"], "failed")
         self.assertIsNone(results[0]["crop_path"])
         self.assertEqual(len(results[0]["warnings"]), 1)
+
+    def test_warns_when_layout_tagged_table_does_not_look_like_a_real_table(self):
+        # Regression case: the layout model itself tagged a fill-in-the-blank
+        # paragraph ("2배, 3배... 1/2배, 1/3배" -- repeated short fraction-y
+        # fragments) as `table` with high confidence. We can't retag it back
+        # to paragraph from here (schema requires a table-type record for a
+        # table-type block), but we can flag it for review the same way a
+        # bad figure/formula reclassification would be rejected.
+        page = _page(
+            [
+                {
+                    "block_id": "p16_b6",
+                    "type": "table",
+                    "bbox": [180, 364, 685, 489],
+                    "score": 0.94,
+                    "detector": "doclayout_yolo",
+                },
+            ]
+        )
+        with patch(
+            "src.analysis.table.analyzer.analyze_table_block",
+            return_value={
+                "analysis": {
+                    "status": "success",
+                    "model": {"name": "TableRecognitionPipelineV2", "version": "paddleocr-3.7"},
+                    "confidence": None,
+                    "result": {
+                        "kind": "table",
+                        "row_count": 1,
+                        "column_count": 1,
+                        "cells": [
+                            {
+                                "row": 0,
+                                "column": 0,
+                                "row_span": 1,
+                                "column_span": 1,
+                                "text": "두 변수 x, y에서 x가 2배, 3배, 4배로 변함에 따라 y가 1/2배, 1/3배로 변한다",
+                                "is_header": False,
+                            }
+                        ],
+                    },
+                },
+                "warnings": [],
+            },
+        ):
+            results = analyze_table_blocks(page, page_image_path="dummy.png")
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(any("검수" in warning for warning in results[0]["warnings"]))
 
     def test_missing_detector_and_score_default_to_null(self):
         page = _page([{"block_id": "p9_b1", "type": "table", "bbox": [0, 0, 10, 10]}])
