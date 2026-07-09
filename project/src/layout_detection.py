@@ -528,7 +528,11 @@ def _looks_like_paragraph_continuation(text: str) -> bool:
     return korean_count >= 5 and any(marker in compact for marker in continuation_markers)
 
 
-def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] = None) -> List[Dict]:
+def refine_blocks_after_ocr(
+    blocks: List[Dict],
+    ocr_lines: Optional[List[Dict]] = None,
+    correction_profile: Optional[str] = None,
+) -> List[Dict]:
     lines = ocr_lines or []
     processed = _postprocess_blocks(blocks, None, None)
     processed = _expand_paragraphs_with_nearby_ocr_lines(processed, lines)
@@ -540,7 +544,165 @@ def refine_blocks_after_ocr(blocks: List[Dict], ocr_lines: Optional[List[Dict]] 
     recovered = _merge_numbered_items_with_parallel_explanations(recovered)
     recovered = _merge_side_badges_into_paragraphs(recovered)
     recovered = _normalize_paragraph_text_order(recovered)
+    if correction_profile == "unit3":
+        recovered = _apply_unit3_postprocess(recovered, lines)
     return _supplement_nested_formula_lines(recovered, lines)
+
+
+def _apply_unit3_postprocess(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    """Extra postprocessing for the coordinate-plane/graph textbook unit.
+
+    The unit has dense worksheet-like boxes where one paragraph is often split
+    into small left/right fragments. Keep the existing type vocabulary, but make
+    paragraph grouping less brittle for this profile only.
+    """
+    processed = _unit3_reclassify_text_fragments(blocks)
+    processed = _merge_unit3_paragraph_fragments(processed)
+    processed = _attach_unit3_short_labels_to_paragraphs(processed)
+    processed = _merge_unit3_paragraph_fragments(processed)
+    return _merge_and_filter(processed)
+
+
+def _unit3_reclassify_text_fragments(blocks: List[Dict]) -> List[Dict]:
+    result: List[Dict] = []
+    for block in blocks:
+        block = dict(block)
+        text = block.get("text", "").strip()
+        if not text:
+            result.append(block)
+            continue
+        compact = text.replace(" ", "")
+        width = block["bbox"][2] - block["bbox"][0]
+        height = block["bbox"][3] - block["bbox"][1]
+        is_text_fragment = (
+            block["type"] in {"caption", "title", "section_title"}
+            and len(compact) >= 6
+            and not _looks_like_formula_block(text)
+            and not _looks_like_table_text(text)
+            and (height <= 70 or width >= 120)
+        )
+        if is_text_fragment:
+            block["type"] = "paragraph"
+            block["detector"] = f"{block.get('detector', 'layout')}_unit3_text"
+            block["score"] = min(float(block.get("score", 0.55)), 0.72)
+        result.append(block)
+    return result
+
+
+def _merge_unit3_paragraph_fragments(blocks: List[Dict]) -> List[Dict]:
+    result = [dict(block) for block in blocks]
+    consumed = set()
+
+    for index, block in enumerate(result):
+        if index in consumed or block["type"] != "paragraph":
+            continue
+
+        group = [index]
+        changed = True
+        while changed:
+            changed = False
+            group_bbox = _bbox_for_blocks([result[item] for item in group])
+            for other_index, other in enumerate(result):
+                if other_index in consumed or other_index in group or other["type"] != "paragraph":
+                    continue
+                if _should_unit3_merge_paragraph(group_bbox, other["bbox"], result, group):
+                    group.append(other_index)
+                    changed = True
+
+        if len(group) <= 1:
+            continue
+
+        ordered = sorted(group, key=lambda item: (result[item]["bbox"][1], result[item]["bbox"][0]))
+        merged_blocks = [result[item] for item in ordered]
+        block["bbox"] = _bbox_for_blocks(merged_blocks)
+        block["text"] = _join_paragraph_fragments(
+            [item.get("text", "").strip() for item in merged_blocks if item.get("text", "").strip()]
+        )
+        block["score"] = max(float(item.get("score", 0.0)) for item in merged_blocks)
+        block["detector"] = "unit3_paragraph_merge"
+        contexts = [item.get("context") for item in merged_blocks if item.get("context")]
+        if contexts:
+            merged_context = {}
+            for context in contexts:
+                merged_context.update(context)
+            block["context"] = merged_context
+        consumed.update(item for item in group if item != index)
+
+    return [block for item, block in enumerate(result) if item not in consumed]
+
+
+def _should_unit3_merge_paragraph(group_bbox: List[int], candidate_bbox: List[int], blocks: List[Dict], group: List[int]) -> bool:
+    gx1, gy1, gx2, gy2 = group_bbox
+    cx1, cy1, cx2, cy2 = candidate_bbox
+    g_width = max(1, gx2 - gx1)
+    c_width = max(1, cx2 - cx1)
+    vertical_gap = cy1 - gy2 if cy1 >= gy2 else gy1 - cy2 if gy1 >= cy2 else 0
+    if vertical_gap < -18 or vertical_gap > 42:
+        return False
+
+    horizontal_overlap = min(gx2, cx2) - max(gx1, cx1)
+    overlap_ratio = horizontal_overlap / max(1, min(g_width, c_width))
+    same_column = overlap_ratio >= 0.28 or abs(cx1 - gx1) <= 70
+    wrapped_right_column = 0 <= cx1 - gx2 <= max(80, g_width * 0.45) and abs(cy1 - gy1) <= 40
+    wrapped_left_column = 0 <= gx1 - cx2 <= max(80, c_width * 0.45) and abs(cy1 - gy1) <= 40
+    if not (same_column or wrapped_right_column or wrapped_left_column):
+        return False
+
+    bridge = [min(gx1, cx1), min(gy1, cy1), max(gx2, cx2), max(gy2, cy2)]
+    for other_index, other in enumerate(blocks):
+        if other_index in group or other["type"] not in {"figure", "table", "formula"}:
+            continue
+        if _intersection_over_area(other["bbox"], bridge) >= 0.25:
+            return False
+    return True
+
+
+def _attach_unit3_short_labels_to_paragraphs(blocks: List[Dict]) -> List[Dict]:
+    result = [dict(block) for block in blocks]
+    consumed = set()
+
+    for label_index, label in enumerate(result):
+        if label["type"] not in {"title", "section_title", "caption"}:
+            continue
+        text = label.get("text", "").strip()
+        if not text or len(text.replace(" ", "")) > 18:
+            continue
+
+        lx1, ly1, lx2, ly2 = label["bbox"]
+        candidates = []
+        for paragraph_index, paragraph in enumerate(result):
+            if paragraph_index == label_index or paragraph["type"] != "paragraph":
+                continue
+            px1, py1, px2, py2 = paragraph["bbox"]
+            vertical_gap = py1 - ly2
+            horizontal_gap = px1 - lx2
+            horizontal_overlap = min(lx2, px2) - max(lx1, px1)
+            near_above = 0 <= vertical_gap <= 42 and horizontal_overlap >= -30
+            near_left = -30 <= horizontal_gap <= 75 and min(ly2, py2) - max(ly1, py1) > 0
+            if near_above or near_left:
+                candidates.append((abs(vertical_gap) + max(horizontal_gap, 0) * 0.25, paragraph_index))
+
+        if not candidates:
+            continue
+
+        _, paragraph_index = min(candidates)
+        paragraph = result[paragraph_index]
+        paragraph["bbox"] = _bbox_for_blocks([label, paragraph])
+        if text and text not in paragraph.get("text", ""):
+            paragraph["text"] = _join_paragraph_fragments([text, paragraph.get("text", "")])
+        paragraph["detector"] = "unit3_label_attach"
+        consumed.add(label_index)
+
+    return [block for index, block in enumerate(result) if index not in consumed]
+
+
+def _bbox_for_blocks(blocks: List[Dict]) -> List[int]:
+    return [
+        min(block["bbox"][0] for block in blocks),
+        min(block["bbox"][1] for block in blocks),
+        max(block["bbox"][2] for block in blocks),
+        max(block["bbox"][3] for block in blocks),
+    ]
 
 
 def _supplement_nested_formula_lines(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:

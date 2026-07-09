@@ -16,6 +16,7 @@ from src.layout_detection import (
     _split_answer_lines_from_paragraphs,
     _supplement_nested_formula_lines,
     detect_layout,
+    refine_blocks_after_ocr,
 )
 
 
@@ -272,6 +273,47 @@ class LayoutPostprocessingTests(unittest.TestCase):
         self.assertTrue(reordered.startswith("문제9\n"))
         block = {"type": "paragraph", "bbox": [100, 100, 710, 160], "text": reordered, "score": 0.5}
         self.assertTrue(_normalize_paragraph_text_order([block])[0]["text"].startswith("문제9\n"))
+
+    def test_unit3_profile_merges_split_paragraph_fragments(self):
+        blocks = [
+            {
+                "type": "paragraph",
+                "bbox": [100, 100, 520, 135],
+                "text": "(3) 자동차가 움직이기 시작해서 정지할 때까지 걸린 시간을 구하시오.",
+                "score": 0.91,
+            },
+            {
+                "type": "section_title",
+                "bbox": [530, 108, 760, 132],
+                "text": "240초 후 속력이 0이 되었으므로",
+                "score": 0.80,
+            },
+            {
+                "type": "paragraph",
+                "bbox": [530, 138, 760, 165],
+                "text": "정지할 때까지 걸린 시간은 240초이다.",
+                "score": 0.88,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(paragraphs), 1)
+        self.assertIn("(3) 자동차가 움직이기 시작", paragraphs[0]["text"])
+        self.assertIn("정지할 때까지 걸린 시간은 240초이다.", paragraphs[0]["text"])
+
+    def test_unit3_profile_does_not_merge_across_figure(self):
+        blocks = [
+            {"type": "paragraph", "bbox": [100, 100, 420, 130], "text": "그래프를 보고 답하시오.", "score": 0.9},
+            {"type": "figure", "bbox": [120, 150, 420, 360], "text": "", "score": 0.9},
+            {"type": "paragraph", "bbox": [100, 380, 420, 410], "text": "아래 물음에 답하시오.", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(paragraphs), 2)
 
 
 if __name__ == "__main__":

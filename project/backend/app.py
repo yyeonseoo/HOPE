@@ -38,7 +38,7 @@ app.add_middleware(
 
 _OCR_ENGINES = {}
 _ANALYSIS_LOCK = asyncio.Lock()
-LAYOUT_MODES = {"doclayout_yolo", "doclayout_yolo_raw"}
+LAYOUT_MODES = {"doclayout_yolo", "doclayout_yolo_raw", "doclayout_yolo_unit3"}
 
 
 def _get_ocr_engine(lang: str):
@@ -101,6 +101,7 @@ def _analyze_saved_pdf(
         ocr_engine=ocr_engine,
         prefer_pdf_text=prefer_pdf_text,
         model_only=layout_model == "doclayout_yolo_raw",
+        correction_profile="unit3" if layout_model == "doclayout_yolo_unit3" else None,
     )
     return page_count, result
 

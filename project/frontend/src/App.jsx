@@ -246,7 +246,7 @@ export default function App() {
             <label>페이지<input type="number" min="1" max={pageCount || 1} value={pageNumber} onChange={(event) => setPageNumber(Number(event.target.value))} /></label>
             <label>DPI<input type="number" min="120" max="300" step="20" value={dpi} onChange={(event) => setDpi(Number(event.target.value))} /></label>
           </div>
-          <label className="model-field">Layout model<select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}><option value="doclayout_yolo">DocLayout-YOLO + 보정 규칙</option><option value="doclayout_yolo_raw">DocLayout-YOLO 원본</option></select></label>
+          <label className="model-field">Layout model<select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}><option value="doclayout_yolo">DocLayout-YOLO + 보정 규칙</option><option value="doclayout_yolo_unit3">DocLayout-YOLO + 3단원 보정 규칙</option><option value="doclayout_yolo_raw">DocLayout-YOLO 원본</option></select></label>
           <div className="page-count"><span>전체 페이지</span><strong>{pageCount ?? "-"}</strong></div>
           <button className="primary-button" disabled={busy || !file} onClick={analyzePage}>{status === "analyzing" ? "분석 중..." : "페이지 분석"}</button>
           {error && <div className="error-box">{error}</div>}

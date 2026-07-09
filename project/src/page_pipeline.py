@@ -22,6 +22,7 @@ def process_single_page(
     ocr_engine=None,
     prefer_pdf_text: bool = True,
     model_only: bool = False,
+    correction_profile: Optional[str] = None,
 ) -> Dict:
     work_dir.mkdir(parents=True, exist_ok=True)
     page_image_path = work_dir / f"page_{page_number:04d}.png"
@@ -42,7 +43,7 @@ def process_single_page(
     )
     blocks = ocr_blocks(page_image_path, blocks, ocr_lines=ocr_lines, ocr_engine=ocr_engine, lang=lang)
     if not model_only:
-        blocks = refine_blocks_after_ocr(blocks, ocr_lines=ocr_lines)
+        blocks = refine_blocks_after_ocr(blocks, ocr_lines=ocr_lines, correction_profile=correction_profile)
     blocks = sort_reading_order(blocks)
     page_result = build_page_result(page_number, blocks)
     visualize_blocks(page_image_path, blocks, visualization_path)
@@ -52,5 +53,5 @@ def process_single_page(
         "page_image_path": page_image_path,
         "visualization_path": visualization_path,
         "ocr_source": ocr_source,
-        "layout_mode": "model_only" if model_only else "enhanced",
+        "layout_mode": "model_only" if model_only else (correction_profile or "enhanced"),
     }
