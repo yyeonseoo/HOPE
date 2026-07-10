@@ -151,6 +151,20 @@ class LayoutPostprocessingTests(unittest.TestCase):
 
         self.assertEqual([block["type"] for block in result], ["paragraph", "footer"])
 
+    def test_source_caption_does_not_merge_as_side_badge(self):
+        caption = {"type": "caption", "bbox": [650, 250, 780, 270], "text": "출처: 한국거래소, 2016", "score": 0.8}
+        paragraph = {
+            "type": "paragraph",
+            "bbox": [500, 280, 820, 430],
+            "text": "(3) 이 그래프를 보고 종합 주가 지수의 움직임을 말하시오.",
+            "score": 0.9,
+        }
+
+        result = _merge_side_badges_into_paragraphs([caption, paragraph])
+
+        self.assertEqual([block["type"] for block in result], ["caption", "paragraph"])
+        self.assertNotIn("label_text", result[1].get("context") or {})
+
     def test_model_only_detection_skips_all_supplements(self):
         raw_blocks = [{"type": "paragraph", "bbox": [10, 20, 100, 80], "score": 0.91}]
         with patch("src.layout_detection._detect_with_yolo", return_value=raw_blocks), patch(
@@ -314,6 +328,323 @@ class LayoutPostprocessingTests(unittest.TestCase):
         paragraphs = [block for block in result if block["type"] == "paragraph"]
 
         self.assertEqual(len(paragraphs), 2)
+
+    def test_unit3_profile_splits_descriptions_below_multiple_figures(self):
+        blocks = [
+            {"type": "figure", "bbox": [100, 100, 220, 220], "text": "", "score": 0.9},
+            {"type": "figure", "bbox": [320, 100, 440, 220], "text": "", "score": 0.9},
+            {
+                "type": "paragraph",
+                "bbox": [90, 225, 455, 290],
+                "text": "점전하를 직선으로 연결할 때 나타낸 그래프\n일정한 속력으로 걸어갈 때 나타낸 그래프",
+                "score": 0.9,
+            },
+        ]
+        ocr_lines = [
+            {"bbox": [95, 230, 225, 260], "text": "점전하를 직선으로 연결할 때 나타낸 그래프", "score": 0.9},
+            {"bbox": [315, 230, 450, 260], "text": "일정한 속력으로 걸어갈 때 나타낸 그래프", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, ocr_lines, correction_profile="unit3")
+        descriptions = [
+            block
+            for block in result
+            if block["type"] == "paragraph"
+            and (block.get("context") or {}).get("semantic_role") == "figure_description"
+        ]
+
+        self.assertEqual(len(descriptions), 2)
+        self.assertIn("점전하", descriptions[0]["text"])
+        self.assertIn("일정한 속력", descriptions[1]["text"])
+
+    def test_unit3_profile_splits_source_caption_from_paragraph(self):
+        blocks = [
+            {"type": "figure", "bbox": [300, 100, 540, 260], "text": "", "score": 0.9},
+            {
+                "type": "paragraph",
+                "bbox": [270, 265, 560, 340],
+                "text": "(1) 주가 지수가 가장 높은 날을 구하시오.\n출처: 한국거래소, 2016",
+                "score": 0.9,
+            },
+        ]
+        ocr_lines = [
+            {"bbox": [275, 270, 555, 300], "text": "(1) 주가 지수가 가장 높은 날을 구하시오.", "score": 0.9},
+            {"bbox": [390, 305, 555, 325], "text": "출처: 한국거래소, 2016", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, ocr_lines, correction_profile="unit3")
+        captions = [block for block in result if block["type"] == "caption"]
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(captions), 1)
+        self.assertIn("출처", captions[0]["text"])
+        self.assertEqual(captions[0]["context"]["semantic_role"], "figure_caption")
+        self.assertEqual(len(paragraphs), 1)
+        self.assertNotIn("출처", paragraphs[0]["text"])
+
+    def test_unit3_profile_splits_source_caption_without_ocr_lines(self):
+        blocks = [
+            {"type": "figure", "bbox": [300, 100, 540, 260], "text": "", "score": 0.9},
+            {
+                "type": "paragraph",
+                "bbox": [270, 265, 560, 340],
+                "text": "(1) 주가 지수가 가장 높은 날을 구하시오.\n출처: 한국거래소, 2016",
+                "score": 0.9,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        captions = [block for block in result if block["type"] == "caption"]
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(captions), 1)
+        self.assertIn("출처", captions[0]["text"])
+        self.assertEqual(len(paragraphs), 1)
+        self.assertNotIn("출처", paragraphs[0]["text"])
+
+    def test_unit3_profile_tightens_fallback_source_caption_bbox(self):
+        blocks = [
+            {"type": "figure", "bbox": [137, 962, 537, 1128], "text": "", "score": 0.86},
+            {
+                "type": "paragraph",
+                "bbox": [131, 1106, 794, 1162],
+                "text": "❶ 시작점으로부터 20 km까지의 구간에서 높이가 가장 높은 곳을 구하시오.\n[출처: 『동아일보』, 1992. 8. 10.]",
+                "score": 0.72,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        caption = next(block for block in result if block["type"] == "caption")
+
+        self.assertIn("출처", caption["text"])
+        self.assertLess(caption["bbox"][2] - caption["bbox"][0], 360)
+        self.assertLessEqual(caption["bbox"][2], 561)
+
+    def test_unit3_profile_keeps_source_caption_as_separate_block(self):
+        blocks = [
+            {"type": "caption", "bbox": [650, 250, 780, 270], "text": "출처: 한국거래소, 2016", "score": 0.8},
+            {
+                "type": "paragraph",
+                "bbox": [500, 280, 820, 430],
+                "text": "(3) 이 그래프를 보고 종합 주가 지수의 움직임을 말하시오.",
+                "score": 0.9,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        captions = [block for block in result if block["type"] == "caption"]
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(captions), 1)
+        self.assertEqual(captions[0]["text"], "출처: 한국거래소, 2016")
+        self.assertEqual(len(paragraphs), 1)
+        self.assertNotEqual((paragraphs[0].get("context") or {}).get("label_text"), "출처: 한국거래소, 2016")
+
+    def test_unit3_profile_reclassifies_choice_table_as_paragraph(self):
+        blocks = [
+            {
+                "type": "table",
+                "bbox": [100, 100, 360, 260],
+                "text": "⑴그래프에서 가장 높은 곳을 찾는다.\n⑵가장 높은 곳을 기준으로 다시 돌아올 때까지의 시간을 구한다.\n⑶60분을 한 바퀴 회전하는 데 걸린 시간으로 나눈다.",
+                "score": 0.55,
+            }
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+
+        self.assertEqual(result[0]["type"], "paragraph")
+        self.assertIn("⑴그래프", result[0]["text"])
+
+    def test_unit3_profile_reclassifies_variable_formula_as_table(self):
+        blocks = [
+            {
+                "type": "formula",
+                "bbox": [300, 500, 560, 610],
+                "text": "x(kWh)\n1\n2\n3\n4\ny(원)\n313\n626\n939\n1252",
+                "score": 0.55,
+            }
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+
+        self.assertEqual(result[0]["type"], "table")
+        self.assertIn("x(kWh)", result[0]["text"])
+
+    def test_unit3_profile_does_not_reclassify_graph_figure_as_table_from_ocr(self):
+        blocks = [
+            {"type": "figure", "bbox": [300, 500, 620, 640], "text": "", "score": 0.62},
+        ]
+        ocr_lines = [
+            {"bbox": [320, 520, 360, 540], "text": "x(kWh)", "score": 0.9},
+            {"bbox": [390, 520, 540, 540], "text": "1   2   3   4", "score": 0.9},
+            {"bbox": [320, 565, 360, 585], "text": "y(원)", "score": 0.9},
+            {"bbox": [390, 565, 570, 585], "text": "313 626 939 1252", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, ocr_lines, correction_profile="unit3")
+
+        self.assertEqual(result[0]["type"], "figure")
+        self.assertEqual(result[0].get("text", ""), "")
+
+    def test_unit_label_is_not_recovered_as_formula(self):
+        blocks = [
+            {
+                "type": "paragraph",
+                "bbox": [100, 100, 620, 180],
+                "text": "표를 보고 전기 사용량을 구하시오.",
+                "score": 0.9,
+            }
+        ]
+        ocr_lines = [
+            {"bbox": [520, 142, 555, 160], "text": "kWh", "score": 0.92},
+        ]
+
+        result = _supplement_nested_formula_lines(blocks, ocr_lines)
+
+        self.assertEqual([block["type"] for block in result], ["paragraph"])
+
+    def test_unit3_profile_reclassifies_right_side_roman_marker_as_footer(self):
+        blocks = [
+            {"type": "figure", "bbox": [820, 520, 890, 610], "text": "III", "score": 0.8},
+            {"type": "paragraph", "bbox": [200, 520, 760, 610], "text": "문제를 풀어 보자.", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        marker = next(block for block in result if block.get("text") == "III")
+
+        self.assertEqual(marker["type"], "footer")
+
+    def test_unit3_profile_reclassifies_side_roman_marker_before_paragraph_merge(self):
+        blocks = [
+            {
+                "type": "paragraph",
+                "bbox": [300, 650, 760, 720],
+                "text": "전기 충전량에 따라 가격은 몇 배가 되는지 구하여 보자.",
+                "score": 0.9,
+            },
+            {"type": "title", "bbox": [820, 650, 890, 740], "text": "III", "score": 0.8},
+            {
+                "type": "paragraph",
+                "bbox": [300, 730, 760, 770],
+                "text": "아래 표의 값을 살펴보자.",
+                "score": 0.9,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+        marker = next(block for block in result if block.get("text") == "III")
+
+        self.assertEqual(marker["type"], "footer")
+        self.assertTrue(all(block["bbox"][2] <= 770 for block in paragraphs))
+
+    def test_unit3_profile_drops_tiny_decorative_figures(self):
+        blocks = [
+            {"type": "figure", "bbox": [130, 700, 176, 747], "text": "", "score": 0.31},
+            {"type": "figure", "bbox": [140, 960, 540, 1125], "text": "", "score": 0.86},
+            {"type": "paragraph", "bbox": [130, 1128, 780, 1160], "text": "그래프를 보고 답하시오.", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        figures = [block for block in result if block["type"] == "figure"]
+
+        self.assertEqual(len(figures), 1)
+        self.assertEqual(figures[0]["bbox"], [140, 960, 540, 1125])
+
+    def test_unit3_profile_keeps_tiny_decorative_figure_as_merge_boundary(self):
+        blocks = [
+            {
+                "type": "paragraph",
+                "bbox": [112, 592, 590, 666],
+                "text": "⑵ 그래프를 보고 세 사람이 이동한 상황을 이야기하시오.",
+                "score": 0.90,
+            },
+            {"type": "figure", "bbox": [131, 701, 177, 748], "text": "", "score": 0.31},
+            {
+                "type": "paragraph",
+                "bbox": [187, 698, 577, 751],
+                "text": "1992년 제25회 스페인 바르셀로나 하계 올림픽의 마라톤 경기",
+                "score": 0.95,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, [], correction_profile="unit3")
+        paragraphs = [block for block in result if block["type"] == "paragraph"]
+
+        self.assertEqual(len(paragraphs), 2)
+        self.assertFalse(any(block["type"] == "figure" for block in result))
+
+    def test_axis_label_is_not_recovered_as_formula(self):
+        blocks = [
+            {
+                "type": "paragraph",
+                "bbox": [100, 100, 620, 180],
+                "text": "그래프를 보고 이동 거리를 구하시오.",
+                "score": 0.9,
+            }
+        ]
+        ocr_lines = [
+            {"bbox": [520, 142, 585, 160], "text": "거리(km)", "score": 0.92},
+        ]
+
+        result = _supplement_nested_formula_lines(blocks, ocr_lines)
+
+        self.assertEqual([block["type"] for block in result], ["paragraph"])
+
+    def test_unit3_profile_removes_axis_ticks_from_figure_description(self):
+        blocks = [
+            {"type": "figure", "bbox": [130, 960, 540, 1128], "text": "", "score": 0.86},
+            {
+                "type": "paragraph",
+                "bbox": [132, 1105, 790, 1165],
+                "text": "10\n20\n30\n40\n❶ 시작점으로부터 20 km까지의 구간에서 높이가 가장 높은 곳의 높이를 구하시오.",
+                "score": 0.72,
+            },
+        ]
+        ocr_lines = [
+            {"bbox": [134, 1108, 170, 1122], "text": "10", "score": 0.88},
+            {"bbox": [174, 1108, 210, 1122], "text": "20", "score": 0.88},
+            {"bbox": [214, 1108, 250, 1122], "text": "30", "score": 0.88},
+            {"bbox": [254, 1108, 290, 1122], "text": "40", "score": 0.88},
+            {
+                "bbox": [134, 1130, 788, 1158],
+                "text": "❶ 시작점으로부터 20 km까지의 구간에서 높이가 가장 높은 곳의 높이를 구하시오.",
+                "score": 0.9,
+            },
+        ]
+
+        result = refine_blocks_after_ocr(blocks, ocr_lines, correction_profile="unit3")
+        question = next(block for block in result if block["type"] == "paragraph" and "시작점" in block.get("text", ""))
+
+        self.assertNotIn("10\n20\n30\n40", question["text"])
+        self.assertIn("시작점으로부터", question["text"])
+
+    def test_unit3_profile_does_not_create_description_from_axis_label_and_source(self):
+        blocks = [
+            {"type": "figure", "bbox": [130, 960, 540, 1128], "text": "", "score": 0.86},
+            {"type": "figure", "bbox": [615, 692, 840, 1040], "text": "", "score": 0.95},
+            {
+                "type": "paragraph",
+                "bbox": [528, 1108, 768, 1126],
+                "text": "거리(km)\n[출처: 『동아일보』, 1992. 8. 10.]",
+                "score": 0.72,
+            },
+        ]
+        ocr_lines = [
+            {"bbox": [528, 1108, 584, 1126], "text": "거리(km)", "score": 0.9},
+            {"bbox": [585, 1108, 768, 1126], "text": "[출처: 『동아일보』, 1992. 8. 10.]", "score": 0.9},
+        ]
+
+        result = refine_blocks_after_ocr(blocks, ocr_lines, correction_profile="unit3")
+
+        self.assertFalse(
+            any(
+                block["type"] == "paragraph"
+                and "거리(km)" in block.get("text", "")
+                and "출처" in block.get("text", "")
+                for block in result
+            )
+        )
 
 
 if __name__ == "__main__":

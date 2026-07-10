@@ -557,9 +557,16 @@ def _apply_unit3_postprocess(blocks: List[Dict], ocr_lines: List[Dict]) -> List[
     paragraph grouping less brittle for this profile only.
     """
     processed = _unit3_reclassify_text_fragments(blocks)
+    processed = _unit3_reclassify_choice_tables(processed)
+    processed = _unit3_reclassify_variable_tables(processed, ocr_lines)
+    processed = _unit3_reclassify_side_roman_markers(processed)
     processed = _merge_unit3_paragraph_fragments(processed)
     processed = _attach_unit3_short_labels_to_paragraphs(processed)
     processed = _merge_unit3_paragraph_fragments(processed)
+    processed = _split_unit3_figure_captions_from_paragraphs(processed, ocr_lines)
+    processed = _split_unit3_multi_figure_descriptions(processed, ocr_lines)
+    processed = _clean_unit3_axis_ticks_from_text_blocks(processed)
+    processed = _drop_unit3_decorative_figures(processed)
     return _merge_and_filter(processed)
 
 
@@ -577,6 +584,7 @@ def _unit3_reclassify_text_fragments(blocks: List[Dict]) -> List[Dict]:
         is_text_fragment = (
             block["type"] in {"caption", "title", "section_title"}
             and len(compact) >= 6
+            and not _looks_like_unit3_figure_caption(text)
             and not _looks_like_formula_block(text)
             and not _looks_like_table_text(text)
             and (height <= 70 or width >= 120)
@@ -586,6 +594,154 @@ def _unit3_reclassify_text_fragments(blocks: List[Dict]) -> List[Dict]:
             block["detector"] = f"{block.get('detector', 'layout')}_unit3_text"
             block["score"] = min(float(block.get("score", 0.55)), 0.72)
         result.append(block)
+    return result
+
+
+def _unit3_reclassify_choice_tables(blocks: List[Dict]) -> List[Dict]:
+    result: List[Dict] = []
+    for block in blocks:
+        block = dict(block)
+        if block["type"] == "table" and _looks_like_unit3_choice_or_solution_text(block.get("text", "")):
+            block["type"] = "paragraph"
+            block["detector"] = f"{block.get('detector', 'layout')}_unit3_choice_text"
+            block["score"] = min(float(block.get("score", 0.55)), 0.72)
+        result.append(block)
+    return result
+
+
+def _looks_like_unit3_choice_or_solution_text(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    compact = "".join(lines)
+    if not compact:
+        return False
+
+    korean_count = sum("\uac00" <= char <= "\ud7a3" for char in compact)
+    numbered_items = sum(
+        bool(re.match(r"^(?:[\(（]?\d{1,2}[\)）.]|[①②③④⑤⑥⑦⑧⑨⑩⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽])", line.replace(" ", "")))
+        for line in lines
+    )
+    korean_choice_items = sum(bool(re.match(r"^[ㄱ-ㅎ가-힣][\.\)]", line.replace(" ", ""))) for line in lines)
+    answer_or_solution = any(marker in compact for marker in ["정답", "답", "풀이", "과정"])
+    prose_markers = any(marker in compact for marker in ["입니다", "이다", "된다", "높은", "낮은", "구하", "찾", "포함"])
+    cell_like_headers = any(keyword in compact for keyword in ["연도", "구분", "합계", "비중", "증감", "국가", "예산"])
+
+    return (
+        not cell_like_headers
+        and korean_count >= 8
+        and (numbered_items >= 2 or korean_choice_items >= 2 or answer_or_solution)
+        and prose_markers
+    )
+
+
+def _unit3_reclassify_variable_tables(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    result: List[Dict] = []
+    for block in blocks:
+        block = dict(block)
+        if block["type"] != "formula":
+            result.append(block)
+            continue
+
+        text = block.get("text", "").strip()
+        if _looks_like_unit3_variable_table_text(text):
+            block["type"] = "table"
+            block["text"] = text or block.get("text", "")
+            block["detector"] = f"{block.get('detector', 'layout')}_unit3_variable_table"
+            block["score"] = min(float(block.get("score", 0.55)), 0.72)
+        result.append(block)
+    return result
+
+
+def _looks_like_unit3_variable_table_text(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    compact = "".join(lines).replace(" ", "")
+    if len(compact) < 8:
+        return False
+    if _looks_like_long_sentence(text) or _looks_like_prose_paragraph(text):
+        return False
+
+    has_variable_header = bool(re.search(r"[xy]\s*[\(（][^)）]+[\)）]", text, re.IGNORECASE))
+    has_x_y_rows = bool(re.search(r"(?:^|\n)\s*x\s*(?:\n|$)", text, re.IGNORECASE)) and bool(
+        re.search(r"(?:^|\n)\s*y\s*(?:\n|$)", text, re.IGNORECASE)
+    )
+    has_unit_header = any(unit in compact for unit in ["kWh", "kwh", "원", "km", "mL", "L"]) and any(
+        axis in compact for axis in ["x", "y"]
+    )
+    numeric_tokens = re.findall(r"[−-]?\d+(?:\.\d+)?", text)
+    ellipsis_or_sequence = "…" in compact or "..." in compact or len(numeric_tokens) >= 4
+
+    return (has_variable_header or has_x_y_rows or has_unit_header) and ellipsis_or_sequence
+
+
+def _drop_unit3_decorative_figures(blocks: List[Dict]) -> List[Dict]:
+    """Discard tiny low-confidence icons before figure semantics run.
+
+    The unit uses small badges such as character heads and UI-like markers near
+    paragraphs. DocLayout sometimes calls them figures, but treating them as
+    figures later creates noisy graph/image analysis targets.
+    """
+    result: List[Dict] = []
+    for block in blocks:
+        if block["type"] != "figure":
+            result.append(block)
+            continue
+
+        x1, y1, x2, y2 = block["bbox"]
+        width = x2 - x1
+        height = y2 - y1
+        score = float(block.get("score", 0.0))
+        if width <= 70 and height <= 70 and score < 0.55:
+            continue
+        result.append(block)
+    return result
+
+
+def _unit3_reclassify_side_roman_markers(blocks: List[Dict]) -> List[Dict]:
+    result: List[Dict] = []
+    for block in blocks:
+        block = dict(block)
+        if block["type"] in {"figure", "title", "section_title", "caption", "paragraph"} and _looks_like_side_roman_marker(block):
+            block["type"] = "footer"
+            block["detector"] = f"{block.get('detector', 'layout')}_unit3_side_marker"
+            block["score"] = min(float(block.get("score", 0.55)), 0.72)
+        result.append(block)
+    return result
+
+
+def _looks_like_side_roman_marker(block: Dict) -> bool:
+    text = block.get("text", "").strip().upper()
+    x1, y1, x2, y2 = block["bbox"]
+    width = x2 - x1
+    height = y2 - y1
+    if text in {"I", "II", "III", "IV", "V", "VI"}:
+        return width <= 100 and height <= 140 and x1 >= 680
+    return block["type"] == "figure" and not text and width <= 90 and height <= 120 and x1 >= 760
+
+
+def _clean_unit3_axis_ticks_from_text_blocks(blocks: List[Dict]) -> List[Dict]:
+    result: List[Dict] = []
+    for block in blocks:
+        if block["type"] not in {"paragraph", "table"}:
+            result.append(block)
+            continue
+
+        lines = [line.strip() for line in block.get("text", "").splitlines() if line.strip()]
+        if len(lines) < 3:
+            result.append(block)
+            continue
+
+        tick_lines = [line for line in lines if _looks_like_axis_tick_text(line)]
+        content_lines = [line for line in lines if not _looks_like_axis_tick_text(line)]
+        if len(tick_lines) < 2 or not content_lines:
+            result.append(block)
+            continue
+
+        cleaned = dict(block)
+        cleaned["text"] = "\n".join(content_lines)
+        cleaned["detector"] = f"{block.get('detector', 'layout')}_axis_tick_clean"
+        if block["type"] == "table" and any(marker in cleaned["text"] for marker in ["구하시오", "답하시오", "그래프"]):
+            cleaned["type"] = "paragraph"
+            cleaned["score"] = min(float(block.get("score", 0.55)), 0.72)
+        result.append(cleaned)
     return result
 
 
@@ -667,6 +823,8 @@ def _attach_unit3_short_labels_to_paragraphs(blocks: List[Dict]) -> List[Dict]:
         text = label.get("text", "").strip()
         if not text or len(text.replace(" ", "")) > 18:
             continue
+        if _looks_like_unit3_figure_caption(text):
+            continue
 
         lx1, ly1, lx2, ly2 = label["bbox"]
         candidates = []
@@ -694,6 +852,309 @@ def _attach_unit3_short_labels_to_paragraphs(blocks: List[Dict]) -> List[Dict]:
         consumed.add(label_index)
 
     return [block for index, block in enumerate(result) if index not in consumed]
+
+
+def _split_unit3_figure_captions_from_paragraphs(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    figures = [block for block in blocks if block["type"] == "figure"]
+    if not figures:
+        return blocks
+
+    result: List[Dict] = []
+    for block in blocks:
+        if block["type"] != "paragraph":
+            result.append(block)
+            continue
+
+        inner_lines = _lines_inside(ocr_lines, block["bbox"]) if ocr_lines else []
+        if len(inner_lines) < 2:
+            split = _split_unit3_caption_from_block_text(block, figures)
+            if split:
+                result.extend(split)
+            else:
+                result.append(block)
+            continue
+
+        caption_lines = []
+        content_lines = []
+        for line in inner_lines:
+            text = line.get("text", "").strip()
+            if _looks_like_unit3_figure_caption(text) and _is_unit3_caption_near_figure(line["bbox"], figures):
+                caption_lines.append(line)
+            else:
+                content_lines.append(line)
+
+        if not caption_lines or not content_lines:
+            split = _split_unit3_caption_from_block_text(block, figures)
+            if split:
+                result.extend(split)
+            else:
+                result.append(block)
+            continue
+
+        content_block = dict(block)
+        ordered_content = _sort_ocr_lines_for_text(content_lines)
+        content_block["bbox"] = _bbox_for_lines(ordered_content)
+        content_block["text"] = "\n".join(
+            line.get("text", "").strip() for line in ordered_content if line.get("text", "").strip()
+        )
+
+        result.append(content_block)
+        for caption_group in _unit3_group_unassigned_lines(caption_lines):
+            ordered_caption = _sort_ocr_lines_for_text(caption_group)
+            caption_block = {
+                "type": "caption",
+                "bbox": _bbox_for_lines(ordered_caption),
+                "text": "\n".join(
+                    line.get("text", "").strip() for line in ordered_caption if line.get("text", "").strip()
+                ),
+                "score": min(max(float(line.get("score", 0.45)) for line in ordered_caption), 0.72),
+                "detector": "unit3_figure_caption_split",
+                "context": {"semantic_role": "figure_caption"},
+            }
+            result.append(caption_block)
+
+    return result
+
+
+def _split_unit3_caption_from_block_text(block: Dict, figures: List[Dict]) -> Optional[List[Dict]]:
+    source_lines = [line.strip() for line in block.get("text", "").splitlines() if line.strip()]
+    if len(source_lines) < 2:
+        return None
+
+    caption_indexes = [index for index, line in enumerate(source_lines) if _looks_like_unit3_figure_caption(line)]
+    if not caption_indexes:
+        return None
+
+    bx1, by1, bx2, by2 = block["bbox"]
+    line_height = max(10, (by2 - by1) / max(len(source_lines), 1))
+    content_lines = [line for index, line in enumerate(source_lines) if index not in caption_indexes]
+    caption_lines = [line for index, line in enumerate(source_lines) if index in caption_indexes]
+    if not content_lines or not caption_lines:
+        return None
+
+    caption_start = min(caption_indexes)
+    caption_end = max(caption_indexes)
+    caption_bbox = [
+        bx1,
+        int(by1 + caption_start * line_height),
+        bx2,
+        int(by1 + (caption_end + 1) * line_height),
+    ]
+    if not _is_unit3_caption_near_figure(caption_bbox, figures):
+        return None
+    caption_text = "\n".join(caption_lines)
+    caption_bbox = _tighten_unit3_caption_bbox(caption_bbox, caption_text, figures)
+
+    content_block = dict(block)
+    content_block["text"] = "\n".join(content_lines)
+    if caption_start == 0:
+        content_block["bbox"] = [bx1, int(by1 + (caption_end + 1) * line_height), bx2, by2]
+    elif caption_end == len(source_lines) - 1:
+        content_block["bbox"] = [bx1, by1, bx2, int(by1 + caption_start * line_height)]
+
+    caption_block = {
+        "type": "caption",
+        "bbox": caption_bbox,
+        "text": caption_text,
+        "score": min(float(block.get("score", 0.50)), 0.62),
+        "detector": "unit3_figure_caption_text_split",
+        "context": {"semantic_role": "figure_caption"},
+    }
+    return [content_block, caption_block]
+
+
+def _looks_like_unit3_figure_caption(text: str) -> bool:
+    return _looks_like_source_caption_text(text)
+
+
+def _looks_like_source_caption_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if not compact or len(compact) > 80:
+        return False
+    source_markers = ["출처", "자료", "출전", "출처:", "자료:"]
+    return any(marker in compact for marker in source_markers)
+
+
+def _is_unit3_caption_near_figure(bbox: List[int], figures: List[Dict]) -> bool:
+    return _nearest_unit3_caption_figure(bbox, figures) is not None
+
+
+def _nearest_unit3_caption_figure(bbox: List[int], figures: List[Dict]) -> Optional[Dict]:
+    x1, y1, x2, y2 = bbox
+    line_cx = (x1 + x2) / 2
+    best: Optional[tuple[float, Dict]] = None
+    for figure in figures:
+        fx1, fy1, fx2, fy2 = figure["bbox"]
+        horizontal_margin = max(35, (fx2 - fx1) * 0.25)
+        below_figure = fy2 - 12 <= y1 <= fy2 + 58
+        inside_bottom = fy1 <= y1 <= fy2 + 10 and y1 >= fy2 - max(45, (fy2 - fy1) * 0.18)
+        horizontally_related = fx1 - horizontal_margin <= line_cx <= fx2 + horizontal_margin
+        if horizontally_related and (below_figure or inside_bottom):
+            figure_cx = (fx1 + fx2) / 2
+            distance = abs(line_cx - figure_cx) + abs(y1 - fy2) * 0.35
+            if best is None or distance < best[0]:
+                best = (distance, figure)
+    return None if best is None else best[1]
+
+
+def _tighten_unit3_caption_bbox(bbox: List[int], text: str, figures: List[Dict]) -> List[int]:
+    figure = _nearest_unit3_caption_figure(bbox, figures)
+    if figure is None:
+        return bbox
+
+    x1, y1, x2, y2 = bbox
+    fx1, _, fx2, _ = figure["bbox"]
+    estimated_width = max(90, min(x2 - x1, int(len(text.replace("\n", "")) * 7.5) + 24))
+    tightened_x2 = min(x2, fx2 + 24)
+    tightened_x1 = max(x1, tightened_x2 - estimated_width)
+    if tightened_x2 - tightened_x1 < 50:
+        return bbox
+    return [int(tightened_x1), y1, int(tightened_x2), y2]
+
+
+def _split_unit3_multi_figure_descriptions(blocks: List[Dict], ocr_lines: List[Dict]) -> List[Dict]:
+    if not ocr_lines:
+        return blocks
+
+    figures = [block for block in blocks if block["type"] == "figure"]
+    if len(figures) < 2:
+        return blocks
+
+    result: List[Dict] = []
+    for block in blocks:
+        if block["type"] != "paragraph":
+            result.append(block)
+            continue
+
+        nearby_figures = _unit3_description_figures_for_paragraph(block, figures)
+        if len(nearby_figures) < 2:
+            result.append(block)
+            continue
+
+        inner_lines = _lines_inside(ocr_lines, block["bbox"])
+        if len(inner_lines) < 2:
+            result.append(block)
+            continue
+
+        assigned: Dict[int, List[Dict]] = {index: [] for index in range(len(nearby_figures))}
+        unassigned: List[Dict] = []
+        for line in inner_lines:
+            target_index = _unit3_nearest_described_figure_index(line, nearby_figures, block["bbox"])
+            if target_index is None:
+                unassigned.append(line)
+            else:
+                assigned[target_index].append(line)
+
+        assigned_groups = [lines for lines in assigned.values() if lines]
+        if len(assigned_groups) < 2:
+            result.append(block)
+            continue
+
+        for lines in assigned_groups:
+            description = _unit3_block_from_description_lines(lines, block)
+            if description:
+                result.append(description)
+        for lines in _unit3_group_unassigned_lines(unassigned):
+            description = _unit3_block_from_description_lines(lines, block, detector="unit3_unassigned_paragraph")
+            if description:
+                result.append(description)
+
+    return result
+
+
+def _unit3_description_figures_for_paragraph(paragraph: Dict, figures: List[Dict]) -> List[Dict]:
+    px1, py1, px2, py2 = paragraph["bbox"]
+    paragraph_width = max(1, px2 - px1)
+    candidates = []
+    for figure in figures:
+        fx1, fy1, fx2, fy2 = figure["bbox"]
+        horizontal_overlap = min(px2, fx2) - max(px1, fx1)
+        if horizontal_overlap / max(1, min(paragraph_width, fx2 - fx1)) < 0.15:
+            continue
+        figure_above_or_inside = fy1 <= py2 and fy2 <= py2 + 12 and fy2 >= py1 - 90
+        if not figure_above_or_inside:
+            continue
+        candidates.append(figure)
+    return sorted(candidates, key=lambda item: item["bbox"][0])
+
+
+def _unit3_nearest_described_figure_index(line: Dict, figures: List[Dict], paragraph_bbox: List[int]) -> Optional[int]:
+    lx1, ly1, lx2, ly2 = line["bbox"]
+    line_text = line.get("text", "").strip()
+    if _is_noise_text(line_text):
+        return None
+
+    paragraph_width = max(1, paragraph_bbox[2] - paragraph_bbox[0])
+    line_width = max(1, lx2 - lx1)
+    if line_width / paragraph_width >= 0.62:
+        return None
+
+    line_cx = (lx1 + lx2) / 2
+    line_cy = (ly1 + ly2) / 2
+    best: Optional[tuple[float, int]] = None
+    for index, figure in enumerate(figures):
+        fx1, fy1, fx2, fy2 = figure["bbox"]
+        if line_cy < fy2 - 8:
+            continue
+        vertical_gap = ly1 - fy2
+        if vertical_gap > 95:
+            continue
+        horizontal_margin = max(45, (fx2 - fx1) * 0.35)
+        if not (fx1 - horizontal_margin <= line_cx <= fx2 + horizontal_margin):
+            continue
+        figure_cx = (fx1 + fx2) / 2
+        distance = abs(line_cx - figure_cx) + max(vertical_gap, 0) * 0.35
+        if best is None or distance < best[0]:
+            best = (distance, index)
+    return None if best is None else best[1]
+
+
+def _unit3_group_unassigned_lines(lines: List[Dict]) -> List[List[Dict]]:
+    if not lines:
+        return []
+    groups: List[List[Dict]] = []
+    for line in _sort_ocr_lines_for_text(lines):
+        if not groups:
+            groups.append([line])
+            continue
+        previous = groups[-1][-1]
+        vertical_gap = line["bbox"][1] - previous["bbox"][3]
+        horizontal_overlap = min(line["bbox"][2], previous["bbox"][2]) - max(line["bbox"][0], previous["bbox"][0])
+        same_flow = vertical_gap <= 36 and (horizontal_overlap > 0 or abs(line["bbox"][0] - previous["bbox"][0]) <= 90)
+        if same_flow:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    return groups
+
+
+def _unit3_block_from_description_lines(
+    lines: List[Dict],
+    source: Dict,
+    detector: str = "unit3_figure_description_split",
+) -> Optional[Dict]:
+    ordered = _sort_ocr_lines_for_text(lines)
+    content_lines = [
+        line
+        for line in ordered
+        if not _looks_like_axis_tick_text(line.get("text", ""))
+        and not _looks_like_axis_label_text(line.get("text", ""))
+        and not _looks_like_source_caption_text(line.get("text", ""))
+    ]
+    if not content_lines:
+        return None
+    if content_lines:
+        ordered = content_lines
+    block = dict(source)
+    block["bbox"] = _bbox_for_lines(ordered)
+    block["text"] = "\n".join(line.get("text", "").strip() for line in ordered if line.get("text", "").strip())
+    block["type"] = "paragraph"
+    block["score"] = min(max(float(line.get("score", 0.45)) for line in ordered), 0.72)
+    block["detector"] = detector
+    context = dict(block.get("context") or {})
+    context["semantic_role"] = context.get("semantic_role", "figure_description")
+    block["context"] = context
+    return block
 
 
 def _bbox_for_blocks(blocks: List[Dict]) -> List[int]:
@@ -775,10 +1236,44 @@ def _supplement_nested_formula_lines(blocks: List[Dict], ocr_lines: List[Dict]) 
 
 def _looks_like_standalone_formula_line(text: str) -> bool:
     compact = text.replace(" ", "")
-    if len(compact) < 5 or _looks_like_sentence_with_math(text) or _looks_like_long_sentence(text):
+    if (
+        len(compact) < 5
+        or _looks_like_sentence_with_math(text)
+        or _looks_like_long_sentence(text)
+        or _looks_like_axis_or_legend_text(text)
+        or _looks_like_axis_label_text(text)
+        or _looks_like_unit_label_text(text)
+    ):
         return False
     korean_count = sum("\uac00" <= char <= "\ud7a3" for char in compact)
     return korean_count <= 6 and (_looks_like_formula(text) or _looks_like_formula_block(text))
+
+
+def _looks_like_axis_tick_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if not compact:
+        return False
+    number = r"[−-]?\d+(?:\.\d+)?"
+    return bool(re.fullmatch(rf"{number}(?:[,，\s]+{number})*", compact))
+
+
+def _looks_like_axis_label_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if not compact or len(compact) > 24:
+        return False
+    axis_words = ["거리", "시간", "높이", "속력", "온도", "기온", "전압", "전류", "무게", "개수", "가격"]
+    axis_units = ["km", "m", "cm", "초", "분", "시간", "원", "%", "℃"]
+    return any(word in compact for word in axis_words) and (
+        "(" in compact or ")" in compact or any(unit in compact for unit in axis_units)
+    )
+
+
+def _looks_like_unit_label_text(text: str) -> bool:
+    compact = text.strip().replace(" ", "")
+    if not compact or len(compact) > 16:
+        return False
+    units = ["kWh", "kwh", "km", "m", "cm", "kg", "g", "원", "초", "분", "시간", "%", "℃"]
+    return any(unit in compact for unit in units) and not re.search(r"\d", compact)
 
 
 def _detect_with_yolo(
@@ -1718,6 +2213,8 @@ def _merge_side_badges_into_paragraphs(blocks: List[Dict]) -> List[Dict]:
             continue
         badge_text = badge.get("text", "").strip()
         if len(badge_text.replace(" ", "")) > 16:
+            continue
+        if _looks_like_source_caption_text(badge_text):
             continue
 
         bx1, by1, bx2, by2 = badge["bbox"]
