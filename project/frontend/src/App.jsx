@@ -132,6 +132,61 @@ function DescriptionResult({ description }) {
   );
 }
 
+function formatFormulaWarning(warning) {
+  if (!warning) {
+    return "";
+  }
+
+  if (warning.includes("rejected as unreliable")) {
+    return "pix2tex 이미지 수식 인식 결과가 신뢰도 기준을 통과하지 못해 OCR 기반 보정 결과를 사용했습니다. 점역 전 원본 수식 확인이 필요합니다.";
+  }
+
+  if (warning.includes("unavailable or failed")) {
+    return "pix2tex 이미지 수식 인식을 사용할 수 없어 OCR 기반 보정 결과를 사용했습니다.";
+  }
+
+  if (warning.includes("Formula crop path was not provided")) {
+    return "수식 이미지 crop 경로가 제공되지 않아 텍스트 기반으로만 분석했습니다.";
+  }
+
+  if (warning.includes("Formula crop file does not exist")) {
+    return "수식 이미지 crop 파일을 찾을 수 없어 텍스트 기반으로만 분석했습니다.";
+  }
+
+  if (warning.includes("does not contain a formula-like expression")) {
+    return "수식 영역으로 감지되었지만 수식 형태가 약해 점역 전 확인이 필요합니다.";
+  }
+
+  if (warning.includes("could not be recognized")) {
+    return "수식을 자동 인식하지 못했습니다. 원문 수식 확인이 필요합니다.";
+  }
+
+  if (warning.includes("Formula text was not available from Model A output")) {
+    return "Model A 출력에서 수식 텍스트를 찾지 못했습니다. 원문 수식 확인이 필요합니다.";
+  }
+
+  return warning;
+}
+
+function FormulaWarningResult({ warnings }) {
+  if (!warnings || warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <div className="text-sm font-semibold text-amber-900">
+        점역 검수 참고
+      </div>
+      <ul className="mt-2 list-disc pl-5 text-sm text-amber-900">
+        {warnings.map((warning, index) => (
+          <li key={index}>{formatFormulaWarning(warning)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function AnalysisInspector({ result, type }) {
   const entries = useMemo(() => analysisEntries(result).filter((item) => item.type === type), [result, type]);
   const [selectedId, setSelectedId] = useState(null);
@@ -170,7 +225,7 @@ function AnalysisInspector({ result, type }) {
           <h3>접근성 설명</h3>
           <DescriptionResult description={selected.description} />
         </section>
-        {!!selected.warnings?.length && <div className="warning-box">{selected.warnings.join(" · ")}</div>}
+        <FormulaWarningResult warnings={selected.warnings} type={type} />
       </div>
     </div>
   );
