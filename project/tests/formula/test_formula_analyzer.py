@@ -335,6 +335,17 @@ class TestFormulaAnalyzer(unittest.TestCase):
 
         self.assertEqual(empty_result["status"], "not_started")
         self.assertIsNone(empty_result["short_text"])
+        fraction_result = generate_formula_description(r"y=\frac{8}{x}")
+
+        self.assertEqual(fraction_result["status"], "generated")
+        self.assertIn("반비례", fraction_result["short_text"])
+        self.assertIn("분자와 분모", fraction_result["transcription_notes"])
+
+        negative_fraction_result = generate_formula_description(r"y=-\frac{8}{x}")
+
+        self.assertEqual(negative_fraction_result["status"], "generated")
+        self.assertIn("반비례", negative_fraction_result["short_text"])
+        self.assertIn("-8", negative_fraction_result["short_text"])
 
     def test_rejects_unreliable_pix2tex_output(self):
         bad_latex = (

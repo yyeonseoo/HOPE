@@ -674,7 +674,39 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
             "transcription_notes": "괄호, 쉼표, 각 항을 순서대로 점역합니다.",
             "review_status": "auto",
         }
+    
+    latex_fraction_match = re.fullmatch(
+        r"([a-zA-Z])=([+-]?)\\frac\{([^{}]+)\}\{([^{}]+)\}",
+        latex,
+    )
 
+    if latex_fraction_match:
+        left = latex_fraction_match.group(1)
+        sign = latex_fraction_match.group(2)
+        numerator = latex_fraction_match.group(3)
+        denominator = latex_fraction_match.group(4)
+
+        if sign == "-":
+            relation_text = f"{left}와 {denominator}의 곱이 -{numerator}로 일정한 반비례 관계입니다."
+            long_text = (
+                f"수식 {latex}는 {left}가 음수 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
+                f"즉, {denominator}의 값이 커질수록 {left}의 절댓값은 작아지는 반비례 관계를 나타냅니다."
+            )
+        else:
+            relation_text = f"{left}와 {denominator}의 곱이 {numerator}로 일정한 반비례 관계입니다."
+            long_text = (
+                f"수식 {latex}는 {left}가 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
+                f"즉, {denominator}의 값이 커질수록 {left}의 값은 작아지는 반비례 관계를 나타냅니다."
+            )
+
+        return {
+            "status": "generated",
+            "short_text": relation_text,
+            "long_text": long_text,
+            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역하며, 반비례 관계임을 함께 설명합니다.",
+            "review_status": "auto",
+        }
+    
     fraction_match = re.fullmatch(r"([a-zA-Z])=([+-]?\d+)/([a-zA-Z])", latex)
 
     if fraction_match:
@@ -698,24 +730,31 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         variable = linear_match.group(3)
 
         if coefficient in ["", "+"]:
-            coefficient_text = ""
+            coefficient_value = "1"
+            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계입니다."
+            long_text = (
+                f"수식 {latex}는 {left}가 {variable}와 같다는 의미입니다. "
+                f"{variable}의 값이 1 증가하면 {left}도 1만큼 증가합니다."
+            )
         elif coefficient == "-":
-            coefficient_text = "음수 "
+            coefficient_value = "-1"
+            short_text = f"{latex}는 음의 정비례 관계입니다."
+            long_text = (
+                f"수식 {latex}는 {left}가 {variable}에 -1을 곱한 값과 같다는 의미입니다. "
+                f"{variable}의 값이 증가하면 {left}의 값은 반대 방향으로 변합니다."
+            )
         else:
-            coefficient_text = f"{coefficient}배 "
+            coefficient_value = coefficient
+            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계입니다."
+            long_text = (
+                f"수식 {latex}는 {left}가 {variable}에 {coefficient_value}를 곱한 값과 같다는 의미입니다. "
+                f"{variable}의 값이 1 증가하면 {left}는 {coefficient_value}만큼 변합니다."
+            )
 
         return {
             "status": "generated",
-            "short_text": f"{left}는 {variable}의 {coefficient_text}값입니다.",
-            "long_text": f"수식 {latex}는 {left}가 {variable}에 {coefficient or '1'}을 곱한 값과 같다는 의미입니다.",
-            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하여 점역합니다.",
+            "short_text": short_text,
+            "long_text": long_text,
+            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하고, 계수와 변수의 관계를 함께 설명합니다.",
             "review_status": "auto",
         }
-
-    return {
-        "status": "generated",
-        "short_text": f"수식 {latex}입니다.",
-        "long_text": f"인식된 수식은 {latex}입니다.",
-        "transcription_notes": "자동 생성 설명이므로 검토가 필요합니다.",
-        "review_status": "auto",
-    }
