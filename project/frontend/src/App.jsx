@@ -71,6 +71,10 @@ function Confidence({ value }) {
   return <span>{typeof value === "number" ? value.toFixed(3) : "미제공"}</span>;
 }
 
+function Seconds({ value }) {
+  return <span>{typeof value === "number" ? `${value.toFixed(2)}초` : "미제공"}</span>;
+}
+
 function TableResult({ result }) {
   if (!result?.cells?.length) return <p className="muted">복원된 셀이 없습니다.</p>;
   const rows = Array.from({ length: result.row_count }, () => []);
@@ -118,12 +122,21 @@ function SemanticResult({ entry }) {
   );
 }
 
-function DescriptionResult({ description }) {
+function DescriptionResult({ description, captioningEnabled }) {
   if (!description || description.status === "not_started") {
-    return <div className="pending-box">설명 생성 전입니다.</div>;
+    return (
+      <div className="pending-box">
+        {captioningEnabled ? "설명 생성 결과가 없습니다. 경고와 백엔드 로그를 확인하세요." : "왼쪽에서 Figure 설명 생성을 활성화한 뒤 다시 분석하세요."}
+      </div>
+    );
   }
   return (
     <div className="description-output">
+      <dl className="description-metrics">
+        <div><dt>생성 모델</dt><dd>{description.model?.name || "미제공"}</dd></div>
+        <div><dt>생성 신뢰도</dt><dd><Confidence value={description.confidence} /></dd></div>
+        <div><dt>생성 시간</dt><dd><Seconds value={description.generation_time_seconds} /></dd></div>
+      </dl>
       <div><strong>짧은 설명</strong><p>{description.short_text || "없음"}</p></div>
       <div><strong>상세 설명</strong><p>{description.long_text || "없음"}</p></div>
       <div><strong>점역 참고</strong><p>{description.transcription_notes || "없음"}</p></div>
@@ -223,7 +236,7 @@ function AnalysisInspector({ result, type }) {
         </section>
         <section className="review-section">
           <h3>접근성 설명</h3>
-          <DescriptionResult description={selected.description} />
+          <DescriptionResult description={selected.description} captioningEnabled={result.figure_captioning_enabled} />
         </section>
         <FormulaWarningResult warnings={selected.warnings} type={type} />
       </div>
@@ -237,6 +250,7 @@ export default function App() {
   const [pageNumber, setPageNumber] = useState(1);
   const [dpi, setDpi] = useState(120);
   const [layoutModel, setLayoutModel] = useState("doclayout_yolo");
+  const [figureCaptioning, setFigureCaptioning] = useState(false);
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -269,10 +283,11 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file); formData.append("page_number", String(pageNumber));
     formData.append("dpi", String(dpi)); formData.append("lang", "korean"); formData.append("layout_model", layoutModel);
+    formData.append("figure_captioning", String(figureCaptioning));
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, { method: "POST", body: formData });
       if (!response.ok) throw new Error(await parseError(response));
-      const payload = await response.json(); setResult(payload); setPageCount(payload.page_count); setActiveView("layout");
+      const payload = await response.json(); setResult(payload); setPageCount(payload.page_count); setActiveView(figureCaptioning ? "figure" : "layout");
     } catch (err) { setError(err.message); } finally { setStatus("idle"); }
   }
 
@@ -302,6 +317,8 @@ export default function App() {
             <label>DPI<input type="number" min="120" max="300" step="20" value={dpi} onChange={(event) => setDpi(Number(event.target.value))} /></label>
           </div>
           <label className="model-field">Layout model<select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}><option value="doclayout_yolo">DocLayout-YOLO + 보정 규칙</option><option value="doclayout_yolo_unit3">DocLayout-YOLO + 3단원 보정 규칙</option><option value="doclayout_yolo_raw">DocLayout-YOLO 원본</option></select></label>
+          <label className="toggle-field"><input type="checkbox" checked={figureCaptioning} onChange={(event) => setFigureCaptioning(event.target.checked)} /><span>Figure 설명 생성</span></label>
+          {figureCaptioning && <div className="model-field"><span>Figure model</span><strong>Qwen3-VL-2B-Instruct</strong><small>최초 분석 시 Hugging Face 모델을 내려받아 시간이 오래 걸릴 수 있습니다.</small></div>}
           <div className="page-count"><span>전체 페이지</span><strong>{pageCount ?? "-"}</strong></div>
           <button className="primary-button" disabled={busy || !file} onClick={analyzePage}>{status === "analyzing" ? "분석 중..." : "페이지 분석"}</button>
           {error && <div className="error-box">{error}</div>}

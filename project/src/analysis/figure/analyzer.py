@@ -63,7 +63,7 @@ def analyze_figure_block(
         normalized = build_figure_analysis(raw)
 
     nearby_ids = list(dict.fromkeys(item for item in [previous_id, next_id, caption_id] if item is not None))
-    return {
+    record = {
         "schema_version": "1.0.0",
         "page_id": page_id,
         "block_id": block.get("block_id"),
@@ -83,6 +83,9 @@ def analyze_figure_block(
         },
         "warnings": normalized["warnings"],
     }
+    if "description" in normalized:
+        record["description"] = normalized["description"]
+    return record
 
 
 def _neighbor_id(blocks: list[Mapping[str, Any]], index: int) -> Optional[str]:

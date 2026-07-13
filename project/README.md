@@ -121,6 +121,8 @@ powershell -ExecutionPolicy Bypass -File .\run_frontend.ps1
 
 브라우저에서 `http://127.0.0.1:5174`를 엽니다. PDF를 업로드하고 페이지 번호와 DPI를 입력한 뒤, `Layout model`에서 보정 규칙 적용 여부를 선택하고 `페이지 분석`을 누릅니다.
 
+그림 설명을 확인하려면 `Figure 설명 생성`을 체크합니다. OpenCLIP이 figure를 graph, table, mathematical diagram, illustration, photo로 분류하고 Qwen3-VL-2B-Instruct가 유형별 지시문으로 설명을 생성합니다. 분석이 끝나면 Figure 탭에서 figure crop, 설명, 모델명, confidence와 생성 시간을 확인할 수 있습니다. 최초 실행은 Hugging Face 모델 다운로드 때문에 오래 걸릴 수 있습니다.
+
 결과 화면은 다음 탭으로 구성됩니다.
 
 - `Layout`: 전체 페이지의 레이아웃 탐지 시각화
@@ -202,7 +204,7 @@ cd C:\Users\USER\HOPE\project
 ## Current Limitations
 
 - `formula` 탐지는 수식 영역의 위치를 찾는 단계입니다. 현재 일반 OCR의 `text`는 분수, 위첨자, 아래첨자 구조를 정확히 보존하지 못할 수 있습니다. 수식을 의미 구조로 사용하려면 formula crop에 수식 전용 OCR을 적용해 LaTeX 또는 MathML 필드를 추가해야 합니다.
-- `figure`는 현재 영역만 탐지하며 그래프나 그림에 대한 자연어 설명은 생성하지 않습니다. 이후 figure crop, 주변 caption/paragraph, 비전 모델을 결합하는 단계가 필요합니다.
+- `figure` 설명 생성은 선택 기능입니다. OpenCLIP으로 5개 유형을 분류한 뒤 Qwen3-VL-2B-Instruct로 설명을 생성하며, 기본값은 비활성화이므로 필요할 때만 모델을 내려받습니다.
 - 어떤 범용 모델도 모든 교과서에서 누락 0건을 보장하지는 않습니다. 다른 출판사와 과목으로 일반화하려면 다양한 페이지의 정답 라벨과 정량 평가가 필요합니다.
 
 ## Semantic Analysis Contract

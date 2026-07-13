@@ -6,7 +6,7 @@ from .classifier import normalize_figure_type
 from .engine import DEFAULT_MODEL
 
 
-CHART_TYPES = {"line_chart", "bar_chart", "pie_chart", "scatter_plot"}
+CHART_TYPES = {"line_chart", "bar_chart", "pie_chart", "scatter_plot", "graph"}
 
 
 def _nullable_text(value: Any) -> str | None:
@@ -89,7 +89,7 @@ def build_figure_analysis(raw: Mapping[str, Any]) -> dict[str, Any]:
         status = "partial"
         warnings.append("Figure output did not contain a title, axes, or data series.")
 
-    return {
+    normalized = {
         "analysis": {
             "status": status,
             "model": model,
@@ -97,4 +97,35 @@ def build_figure_analysis(raw: Mapping[str, Any]) -> dict[str, Any]:
             "result": result,
         },
         "warnings": list(dict.fromkeys(warnings)),
+    }
+    description = _normalize_generated_description(raw)
+    if description is not None:
+        normalized["description"] = description
+    return normalized
+
+
+def _normalize_generated_description(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    text = _nullable_text(raw.get("description_text"))
+    model = raw.get("description_model")
+    has_description_fields = text is not None or isinstance(model, Mapping) or "generation_time_seconds" in raw
+    if not has_description_fields:
+        return None
+
+    confidence = _confidence(raw.get("description_confidence"))
+    elapsed = raw.get("generation_time_seconds")
+    generation_time = (
+        max(0.0, float(elapsed))
+        if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool)
+        else None
+    )
+    return {
+        "status": "success" if text else "failed",
+        "model": normalize_model(model) if isinstance(model, Mapping) else None,
+        "confidence": confidence,
+        "generation_time_seconds": generation_time,
+        "short_text": text,
+        "long_text": text,
+        "transcription_notes": None,
+        "context_used": False,
+        "review_status": "unreviewed" if text else "needs_review",
     }
