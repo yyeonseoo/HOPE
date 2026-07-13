@@ -46,9 +46,17 @@ def recognize_formula_from_crop(
                         "name": "pix2tex",
                         "version": None,
                     },
-                    "warnings": [],
+                    "warnings": warnings,
                 }
-        
+        warnings.append(
+            "Pix2tex output was rejected as unreliable; fallback recognizer was used."
+        )
+
+    elif crop_path is not None:
+        warnings.append(
+            "Pix2tex was unavailable or failed; fallback recognizer was used."
+        )
+
     if plain_text is not None and not contains_formula_signal(plain_text):
         warnings.append("Detected formula block does not contain a formula-like expression.")
         latex = None

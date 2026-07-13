@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from src.analysis.formula.formula_analyzer import (
     analyze_formula_blocks,
@@ -356,6 +357,30 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertFalse(is_reliable_model_latex(bad_latex))
         self.assertTrue(is_reliable_model_latex("y=ax"))
         self.assertTrue(is_reliable_model_latex(r"y=\frac{1}{2}x"))
+
+    @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
+    def test_warning_when_pix2tex_output_is_rejected(self, mock_pix2tex):
+        mock_pix2tex.return_value = r"\stackrel{\operatorname{noise}}{\Phi}"
+
+        result = recognize_formula_from_crop("fake_crop.png", "y=4x")
+
+        self.assertEqual(result["latex"], "y=4x")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertTrue(
+            any("rejected as unreliable" in warning for warning in result["warnings"])
+        )
+    
+    @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
+    def test_warning_when_pix2tex_is_unavailable_with_crop(self, mock_pix2tex):
+        mock_pix2tex.return_value = None
+
+        result = recognize_formula_from_crop("fake_crop.png", "y=4x")
+
+        self.assertEqual(result["latex"], "y=4x")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertTrue(
+            any("unavailable or failed" in warning for warning in result["warnings"])
+        )
 
 if __name__ == "__main__":
     unittest.main()
