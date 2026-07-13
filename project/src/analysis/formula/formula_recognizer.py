@@ -46,9 +46,17 @@ def recognize_formula_from_crop(
                         "name": "pix2tex",
                         "version": None,
                     },
-                    "warnings": [],
+                    "warnings": warnings,
                 }
-        
+        warnings.append(
+            "Pix2tex output was rejected as unreliable; fallback recognizer was used."
+        )
+
+    elif crop_path is not None:
+        warnings.append(
+            "Pix2tex was unavailable or failed; fallback recognizer was used."
+        )
+
     if plain_text is not None and not contains_formula_signal(plain_text):
         warnings.append("Detected formula block does not contain a formula-like expression.")
         latex = None
@@ -359,6 +367,7 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
     cleaned = remove_formula_prefix(cleaned)
     cleaned = remove_formula_suffix(cleaned)
     cleaned = normalize_fraction_artifacts(cleaned)
+    cleaned = normalize_inline_fraction(cleaned)
     cleaned = cleaned.strip()
 
     if not cleaned:
@@ -444,6 +453,39 @@ def normalize_fraction_artifacts(text: str) -> str:
     text = re.sub(r";(\d+)([!@#$%]);", replace_special_fraction, text)
 
     return text
+
+def normalize_inline_fraction(text: Optional[str]) -> Optional[str]:
+    """
+    y=a/x, y = a / x, y=a÷x 같은 한 줄 분수 표현을 LaTeX 분수로 변환한다.
+    y=ax처럼 분수 기호가 없는 정비례식은 변환하지 않는다.
+    """
+
+    if text is None:
+        return None
+
+    normalized = text.replace("÷", "/").replace("\\div", "/")
+
+    parts = normalized.split(";")
+    converted_parts = [normalize_inline_fraction_part(part) for part in parts]
+
+    return ";".join(converted_parts)
+
+
+def normalize_inline_fraction_part(text: str) -> str:
+    inline_fraction_match = re.fullmatch(
+        r"([a-zA-Z])=([+-]?)([0-9a-zA-Z]+)\/([0-9a-zA-Z]+)",
+        text,
+    )
+
+    if not inline_fraction_match:
+        return text
+
+    left = inline_fraction_match.group(1)
+    sign = inline_fraction_match.group(2)
+    numerator = inline_fraction_match.group(3)
+    denominator = inline_fraction_match.group(4)
+
+    return rf"{left}={sign}\frac{{{numerator}}}{{{denominator}}}"
 
 def convert_latex_to_mathml(latex: Optional[str]) -> Optional[str]:
     """

@@ -264,8 +264,8 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("y=ax (단, a는 0이 아니다.)", "y=ax"),
             ("a>0", "a>0"),
             ("a<0", "a<0"),
-            ("y=6/x", "y=6/x"),
-            ("y = 4 / x", "y=4/x"),
+            ("y=6/x", r"y=\frac{6}{x}"),
+            ("y = 4 / x", r"y=\frac{4}{x}"),
             ("y=;2!;x", r"y=\frac{1}{2}x"),
             ("y=;3@;x", r"y=\frac{2}{3}x"),
             ("(1, a)", "(1,a)"),
@@ -276,9 +276,16 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("식 y=800x", "y=800x"),
             ("⑴ y=4x ⑵ y=-3x", "y=4x;y=-3x"),
             ("(1) y=4x (2) y=-3x", "y=4x;y=-3x"),
-            ("⑴ y=8/x ⑵ y=-8/x", "y=8/x;y=-8/x"),
+            ("⑴ y=8/x ⑵ y=-8/x", r"y=\frac{8}{x};y=-\frac{8}{x}"),
             ("y=ax의 그래프", "y=ax"),
             ("y=ax`", "y=ax"),
+            ("y=a/x", r"y=\frac{a}{x}"),
+            ("y = a / x", r"y=\frac{a}{x}"),
+            ("y=a÷x", r"y=\frac{a}{x}"),
+            ("y=12/5", r"y=\frac{12}{5}"),
+            ("y=-a/x", r"y=-\frac{a}{x}"),
+            ("⑴ y=a/x ⑵ y=-a/x", r"y=\frac{a}{x};y=-\frac{a}{x}"),
+            ("y=ax", "y=ax"),
         ]
 
         for input_text, expected_latex in cases:
@@ -307,6 +314,8 @@ class TestFormulaAnalyzer(unittest.TestCase):
             r"y=-\frac{8}{x}",
             r"y=\frac{12}{5}",
             r"y=\frac{a}{x}",
+            r"y=-\frac{a}{x}",
+            r"y=\frac{12}{5}",
         ]
 
         for latex in cases:
