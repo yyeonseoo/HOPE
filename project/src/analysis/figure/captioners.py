@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -210,32 +211,34 @@ class Florence2ImageCaptioner:
         )
 
 
+QWEN_ACCESSIBILITY_PROMPT = (
+    "한국 교과서 Figure를 스크린리더 사용자가 이해할 수 있도록 설명하세요. "
+    "보이는 주요 요소와 읽을 수 있는 문자·수식·좌표·값·단위를 바탕으로, 요소 사이의 위치와 관계가 자연스럽게 이어지도록 설명하세요. "
+    "문자, 기호, 화살표, 2배·3배·4배 같은 배수 표시와 범례가 명확히 보이면 중요한 시각 정보로 자연스럽게 포함하세요. "
+    "이미지에서 높은 확신으로 확인되는 정보는 적극적으로 활용하되, 이미지에 없는 객체·값·관계·수식이나 추가적인 계산·일반화·해설은 만들지 마세요. "
+    "같은 의미를 다른 표현으로 반복하지 말고, 하나의 사실이나 관계는 한 번만 설명하며 새로운 정보를 추가할 수 있을 때만 다음 문장을 이어가세요. "
+    "OCR 결과가 깨졌거나 다른 언어 문자와 혼합된 문자열은 그대로 출력하지 말고 문맥에 맞는 자연스러운 한국어로 작성하세요. "
+    "Figure와 Table 모두 항목 제목, 번호 목록, 체크리스트와 Markdown 없이 자연스럽고 읽기 쉬운 하나의 서술형 문단으로 작성하세요. "
+    "모든 문장을 끝까지 완성하고 접근성 설명만 출력하세요. "
+)
+
+
 QWEN_TYPE_PROMPTS = {
     "graph": (
-        "이 그래프가 전달하는 수학적 의미를 한국어로 설명하세요. 축 이름과 단위, 점·선·곡선의 관계, "
-        "증가·감소 경향을 확인하세요. 단위는 이미지에 표시된 경우에만 쓰고 직선과 곡선을 혼동하지 마세요. "
-        "읽을 수 없는 값은 추측하지 말고 단순한 외형 묘사보다 학습 내용을 우선하세요. "
-        "제목, 목록, 단계 구분 없이 2~4문장으로만 답하세요."
+        "직선의 방향, 점의 위치, 증가·감소 경향, 축과 데이터의 관계처럼 시각적으로 확인되는 특징은 구체적으로 설명하세요. "
+        "화면에 수식이 명확히 표시되어 있으면 정확히 읽고, 표시되어 있지 않으면 새로운 식을 추정하지 말고 직선의 방향이나 원점 통과 여부처럼 보이는 특징만 설명하세요."
     ),
     "table": (
-        "이 표의 행과 열, 대응하는 값, 배수나 비례 관계를 한국어로 설명하세요. 보이는 한국어와 수식을 정확히 읽고, "
-        "행·열 이름은 이미지에 적힌 표현만 사용하세요. 읽을 수 없는 값이나 이름은 추측하지 말고 표가 전달하는 핵심 관계를 우선하세요. "
-        "제목이나 목록 없이 2~4문장으로만 답하세요."
+        "표의 행·열 이름과 읽을 수 있는 값, 화살표와 대응 관계를 항목식으로 나열하지 말고 하나의 문단으로 연결하여 설명하세요."
     ),
     "mathematical_diagram": (
-        "이 수학 도식의 구성 요소와 위치 관계, 표시된 기호와 수학적 의미를 한국어로 설명하세요. "
-        "단순한 모양 묘사에 그치지 말고 도식이 설명하는 개념을 말하되, 보이지 않는 내용은 만들지 마세요. "
-        "제목이나 목록 없이 2~4문장으로만 답하세요."
+        "도형, 기호, 수식과 표시된 위치 관계를 설명하세요."
     ),
     "illustration": (
-        "이 교과서 삽화에서 관찰되는 대상과 전후 변화를 한국어로 설명하세요. 과학 도식이면 용기, 추, 화살표, "
-        "입자의 수·간격·분포처럼 직접 보이는 변화를 우선하세요. 물질의 종류나 원인은 근거가 없으면 추측하지 말고, "
-        "읽을 수 없는 글자도 추측하지 마세요. "
-        "제목이나 목록 없이 2~4문장으로만 답하세요."
+        "보이는 대상, 강조 표시, 화살표와 전후 관계를 설명하세요."
     ),
     "photo": (
-        "이 교과서 사진에 실제로 보이는 대상과 상황을 한국어로 간결하게 설명하세요. "
-        "사진의 교육적 맥락을 추측하지 말고 확인 가능한 사실만 제목이나 목록 없이 2~4문장으로 작성하세요."
+        "사진에 보이는 대상과 상황을 간결하게 설명하세요."
     ),
 }
 
@@ -251,12 +254,16 @@ class Qwen3VLCaptioner:
         *,
         device: str = "auto",
         revision: str | None = None,
-        max_new_tokens: int = 256,
+        max_new_tokens: int = 192,
+        repetition_penalty: float = 1.05,
+        no_repeat_ngram_size: int = 4,
     ) -> None:
         self.model_name = model_id
         self.model_version = revision
         self.device_request = device
         self.max_new_tokens = max_new_tokens
+        self.repetition_penalty = repetition_penalty
+        self.no_repeat_ngram_size = no_repeat_ngram_size
         self._model: Any = None
         self._processor: Any = None
         self._device: str | None = None
@@ -265,7 +272,9 @@ class Qwen3VLCaptioner:
     def caption(self, image_path: str | Path, figure_type: str) -> CaptionOutput:
         torch = _import_torch()
         self._load(torch)
-        prompt = QWEN_TYPE_PROMPTS.get(figure_type, QWEN_TYPE_PROMPTS["illustration"])
+        prompt = QWEN_ACCESSIBILITY_PROMPT + QWEN_TYPE_PROMPTS.get(
+            figure_type, QWEN_TYPE_PROMPTS["illustration"]
+        )
         started = time.perf_counter()
         with Image.open(image_path) as source:
             image = source.convert("RGB")
@@ -289,10 +298,14 @@ class Qwen3VLCaptioner:
             for name, value in inputs.items()
         }
         with torch.inference_mode():
+            special_token_ids = _generation_special_token_ids(self._processor, self._model)
             generated = self._model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
+                repetition_penalty=self.repetition_penalty,
+                no_repeat_ngram_size=self.no_repeat_ngram_size,
                 do_sample=False,
+                **special_token_ids,
                 return_dict_in_generate=True,
                 output_scores=True,
             )
@@ -302,6 +315,7 @@ class Qwen3VLCaptioner:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
+        text = _postprocess_qwen_caption(text)
         return CaptionOutput(
             text=text,
             confidence=_sequence_confidence(self._model, generated),
@@ -329,6 +343,62 @@ class Qwen3VLCaptioner:
         self._model.eval()
         self._dtype = next(self._model.parameters()).dtype
         self._processor = AutoProcessor.from_pretrained(self.model_name, revision=self.model_version)
+
+
+def _postprocess_qwen_caption(text: str) -> str:
+    """Remove obvious generation artifacts without rewriting valid OCR or math."""
+    text = text.replace("\ufffd", "").replace("```", "").replace("`", "")
+    text = text.replace("**", "")
+    text = re.sub(r"(?m)^\s*(?:[-*•]\s+|\d+[.)]\s+|#{1,6}\s*)", "", text)
+    text = re.sub(r"^\s*[^.!?。！？\n:]{1,20}:\s*", "", text)
+    text = text.replace("#(", "(")
+    parts = [part.strip() for part in re.findall(r".+?(?:[.!?。！？]+|$)", text, flags=re.DOTALL) if part.strip()]
+    kept: list[str] = []
+    seen: set[str] = set()
+    duplicate_run = 0
+    for index, sentence in enumerate(parts):
+        is_trailing_fragment = index == len(parts) - 1 and not re.search(r"[.!?。！？]$", sentence)
+        if is_trailing_fragment and kept:
+            break
+        sentence = _collapse_adjacent_repeated_phrases(sentence)
+        key = re.sub(r"\s+", " ", sentence).strip()
+        if key in seen:
+            duplicate_run += 1
+            if duplicate_run >= 3:
+                break
+            continue
+        duplicate_run = 0
+        seen.add(key)
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
+def _collapse_adjacent_repeated_phrases(text: str) -> str:
+    """Collapse only verbatim, immediately adjacent phrase loops."""
+    previous = None
+    while text != previous:
+        previous = text
+        text = re.sub(r"(?<!\S)((?:\S+\s+){1,5}\S+)(?:\s+\1){1,}", r"\1", text)
+        text = re.sub(r"(?<!\S)(\S+)(?:\s+\1){2,}", r"\1", text)
+    return text
+
+
+def _generation_special_token_ids(processor: Any, model: Any) -> dict[str, Any]:
+    tokenizer = getattr(processor, "tokenizer", processor)
+    generation_config = getattr(model, "generation_config", None)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if eos_token_id is None and generation_config is not None:
+        eos_token_id = getattr(generation_config, "eos_token_id", None)
+    if pad_token_id is None and generation_config is not None:
+        pad_token_id = getattr(generation_config, "pad_token_id", None)
+    if pad_token_id is None:
+        pad_token_id = eos_token_id[0] if isinstance(eos_token_id, (list, tuple)) else eos_token_id
+    return {
+        key: value
+        for key, value in {"eos_token_id": eos_token_id, "pad_token_id": pad_token_id}.items()
+        if value is not None
+    }
 
 
 def _import_torch() -> Any:
