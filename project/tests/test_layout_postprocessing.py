@@ -199,6 +199,48 @@ class LayoutPostprocessingTests(unittest.TestCase):
 
         self.assertEqual(result[0]["type"], "paragraph")
 
+    def test_narrow_wrapped_prose_is_not_a_table(self):
+        # Real production text (3단원 좌표평면과 그래프 2.pdf, page 6) that stayed
+        # misclassified as "table" through table-analysis's own reclassification
+        # review: a genuine numbered-step explanation, but crammed into a
+        # narrow box so every wrapped display line is short. _looks_like_
+        # prose_paragraph's line-average/long-line-ratio checks only look at
+        # individual line length, so they missed this even though the
+        # concatenated text is clearly a Korean sentence.
+        text = (
+            "⑴그래프에서 가장 높은 곳을 찾는다.\n"
+            "⑵가장 높은 곳을 기준으로 다시 돌아\n"
+            "올 때까지의 시간을 구한다.\n"
+            "⑶60분을 한 바퀴 회전하는 데 걸린 시\n"
+            "간으로 나눈다."
+        )
+        block = {"type": "table", "bbox": [100, 100, 400, 220], "text": text, "score": 0.5}
+
+        result = _postprocess_blocks([block], None, None)
+
+        self.assertEqual(result[0]["type"], "paragraph")
+
+    def test_prose_with_stacked_fraction_notation_is_not_a_table(self):
+        # Real production text (page 12): a stacked fraction ("1/2배") gets
+        # OCR'd with the numerator and denominator on separate lines, which
+        # both shortens the average line length and adds several very short
+        # lines -- previously enough to fail the prose heuristic despite the
+        # sentence being unambiguous prose (ends in "...있다.").
+        text = (
+            "오른쪽 표에서 x가 2배,\n"
+            "3배, 4배, y가 되면 y는\n"
+            "1\n"
+            "2 배, 1\n"
+            "3 배, 1\n"
+            "4 배, y가 되\n"
+            "는 것을 알 수 있다."
+        )
+        block = {"type": "table", "bbox": [100, 100, 400, 260], "text": text, "score": 0.5}
+
+        result = _postprocess_blocks([block], None, None)
+
+        self.assertEqual(result[0]["type"], "paragraph")
+
     def test_cell_oriented_numeric_text_remains_a_table(self):
         text = "국가\n2008년\n2009년\n2010년\n대한민국\n2,829\n0.708\n6.497\n그리스\n-0.214\n-3.136\n-4.943"
 
