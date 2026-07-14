@@ -14,14 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+for _path in (ROOT_DIR, SRC_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from ocr import _load_paddleocr
 from pdf_text import extract_pdf_text_lines
 from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
 from analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
+from analysis.table import analyze_table_blocks
 
 app = FastAPI(title="Textbook Layout Parser API")
 
@@ -173,6 +175,9 @@ async def analyze_page(
         semantic_analyses = analyze_formula_blocks(
             result["page"],
             page_image_path=result["page_image_path"],
+        )
+        semantic_analyses.extend(
+            analyze_table_blocks(result["page"], str(result["page_image_path"]))
         )
         figure_engine = _get_figure_engine(figure_captioning)
         if figure_engine is not None:
