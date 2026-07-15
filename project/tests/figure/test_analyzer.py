@@ -51,6 +51,12 @@ class FakeCaptionEngine(FakeChartEngine):
         return output
 
 
+class EvidenceAwareEngine(FakeChartEngine):
+    def analyze(self, image_path, evidence=None):
+        self.evidence = evidence
+        return super().analyze(image_path)
+
+
 class FigureAnalyzerTests(unittest.TestCase):
     def setUp(self):
         self.validator = Draft202012Validator(SCHEMA)
@@ -103,6 +109,23 @@ class FigureAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["description"]["confidence"], 0.76)
         self.assertEqual(result["description"]["generation_time_seconds"], 0.42)
         self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_figure_ocr_evidence_is_forwarded_to_supporting_engine(self):
+        ocr_lines = [
+            {"bbox": [20, 20, 40, 30], "text": "y=ax", "score": 0.99},
+            {"bbox": [20, 35, 40, 45], "text": "(1, a)", "score": 0.95},
+            {"bbox": [20, 50, 40, 60], "text": "unreliable", "score": 0.2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = EvidenceAwareEngine()
+            analyze_figure_blocks(
+                self.page,
+                self._page_image(tmp),
+                engine=engine,
+                ocr_lines=ocr_lines,
+            )
+
+        self.assertEqual(engine.evidence, ["y=ax", "(1, a)"])
 
     def test_engine_failure_is_isolated_to_the_block(self):
         with tempfile.TemporaryDirectory() as tmp:

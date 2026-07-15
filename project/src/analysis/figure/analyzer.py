@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from .classifier import metadata_figure_type
 from .crop import crop_and_save_figure_block
@@ -14,6 +14,7 @@ def analyze_figure_blocks(
     page_image_path: str | Path | None = None,
     engine: FigureUnderstandingEngine | None = None,
     output_dir: str | Path | None = None,
+    ocr_lines: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Analyze every figure block using the same interface as other modules."""
     page_id = page.get("page_id")
@@ -22,7 +23,7 @@ def analyze_figure_blocks(
         return []
 
     return [
-        analyze_figure_block(page_id, block, blocks, index, page_image_path, engine, output_dir)
+        analyze_figure_block(page_id, block, blocks, index, page_image_path, engine, output_dir, ocr_lines)
         for index, block in enumerate(blocks)
         if isinstance(block, Mapping) and block.get("type") == "figure"
     ]
@@ -36,6 +37,7 @@ def analyze_figure_block(
     page_image_path: str | Path | None = None,
     engine: FigureUnderstandingEngine | None = None,
     output_dir: str | Path | None = None,
+    ocr_lines: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     bbox = block.get("bbox")
     crop_path = crop_and_save_figure_block(page_image_path, block, page_id, output_dir)
@@ -54,7 +56,8 @@ def analyze_figure_block(
             "warnings": ["Page image or a valid figure bbox was not available."],
         }
     else:
-        raw = run_figure_engine(engine, crop_path)
+        evidence = _figure_text_evidence(ocr_lines, bbox)
+        raw = run_figure_engine(engine, crop_path, evidence=evidence)
         if engine is None:
             explicit_type = metadata_figure_type(block)
             if explicit_type != "unknown":
@@ -105,3 +108,28 @@ def _safe_confidence(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return min(1.0, max(0.0, float(value)))
+
+
+def _figure_text_evidence(
+    ocr_lines: Sequence[Mapping[str, Any]] | None,
+    figure_bbox: Any,
+) -> list[str]:
+    """Collect reasonably reliable text whose center lies inside a figure."""
+    if not ocr_lines or not isinstance(figure_bbox, (list, tuple)) or len(figure_bbox) != 4:
+        return []
+    x1, y1, x2, y2 = figure_bbox
+    evidence: list[str] = []
+    for line in ocr_lines:
+        bbox = line.get("bbox")
+        text = str(line.get("text") or "").strip()
+        score = line.get("score", 1.0)
+        if not text or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        minimum_score = 0.8 if line.get("source") == "pdf_text" else 0.9
+        if isinstance(score, (int, float)) and not isinstance(score, bool) and score < minimum_score:
+            continue
+        lx1, ly1, lx2, ly2 = bbox
+        center_x, center_y = (lx1 + lx2) / 2, (ly1 + ly2) / 2
+        if x1 <= center_x <= x2 and y1 <= center_y <= y2 and text not in evidence:
+            evidence.append(text)
+    return evidence

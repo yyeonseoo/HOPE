@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 from PIL import Image
+
+from .graph_visual import GraphVisualCue, analyze_graph_visual
 
 
 @dataclass(frozen=True)
@@ -270,29 +273,48 @@ class Qwen3VLCaptioner:
         self._device: str | None = None
         self._dtype: Any = None
 
-    def caption(self, image_path: str | Path, figure_type: str) -> CaptionOutput:
+    def caption(
+        self,
+        image_path: str | Path,
+        figure_type: str,
+        evidence: Sequence[str] | None = None,
+    ) -> CaptionOutput:
+        detected_at = time.perf_counter()
+        with Image.open(image_path) as source:
+            image = source.convert("RGB")
+        visual_cue = analyze_graph_visual(image) if figure_type == "graph" else None
+        if visual_cue is not None and visual_cue.coordinate_plane:
+            if _graph_needs_structured_review(visual_cue):
+                return self._caption_structured_graph(image, visual_cue, evidence)
+            text = _grounded_coordinate_graph_caption(visual_cue, evidence)
+            return CaptionOutput(
+                text=text,
+                confidence=visual_cue.confidence,
+                generation_time_seconds=time.perf_counter() - detected_at,
+                model_name="opencv-ocr-grounded-graph-captioner",
+                model_version="1.0",
+            )
+
         torch = _import_torch()
         self._load(torch)
         prompt = QWEN_ACCESSIBILITY_PROMPT + QWEN_TYPE_PROMPTS.get(
             figure_type, QWEN_TYPE_PROMPTS["illustration"]
-        )
+        ) + _graph_visual_prompt(visual_cue) + _grounding_evidence_prompt(evidence)
         started = time.perf_counter()
-        with Image.open(image_path) as source:
-            image = source.convert("RGB")
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": prompt},
-                ],
-            }]
-            inputs = self._processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
-            )
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": prompt},
+            ],
+        }]
+        inputs = self._processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
         prompt_length = inputs["input_ids"].shape[1]
         inputs = {
             name: value.to(self._device, self._dtype) if value.is_floating_point() else value.to(self._device)
@@ -316,14 +338,73 @@ class Qwen3VLCaptioner:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
+        text, grounding_warnings = _remove_unsupported_exact_claims(text, evidence)
+        text = _apply_graph_trend_grounding(text, visual_cue)
         text = _postprocess_qwen_caption(text)
         warnings = [] if text else ["Qwen3-VL returned an empty caption."]
+        warnings += grounding_warnings
         warnings += _find_suspicious_caption_content(text)
         return CaptionOutput(
             text=text,
             confidence=_sequence_confidence(self._model, generated),
             generation_time_seconds=elapsed,
             model_name=self.model_name,
+            model_version=self.model_version,
+            warnings=warnings,
+        )
+
+    def _caption_structured_graph(
+        self,
+        image: Image.Image,
+        visual_cue: GraphVisualCue,
+        evidence: Sequence[str] | None,
+    ) -> CaptionOutput:
+        torch = _import_torch()
+        self._load(torch)
+        started = time.perf_counter()
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": _structured_graph_prompt()},
+            ],
+        }]
+        inputs = self._processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        prompt_length = inputs["input_ids"].shape[1]
+        inputs = {
+            name: value.to(self._device, self._dtype) if value.is_floating_point() else value.to(self._device)
+            for name, value in inputs.items()
+        }
+        with torch.inference_mode():
+            generated = self._model.generate(
+                **inputs,
+                max_new_tokens=min(64, self.max_new_tokens),
+                do_sample=False,
+                **_generation_special_token_ids(self._processor, self._model),
+                return_dict_in_generate=True,
+                output_scores=True,
+            )
+        raw_text = self._processor.batch_decode(
+            generated.sequences[:, prompt_length:],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0].strip()
+        structure = _parse_structured_graph_response(raw_text)
+        warnings = []
+        if structure is None:
+            warnings.append("Qwen structured graph response was invalid; OpenCV fallback was used.")
+        text = _grounded_coordinate_graph_caption(visual_cue, evidence, structure)
+        return CaptionOutput(
+            text=text,
+            confidence=_sequence_confidence(self._model, generated),
+            generation_time_seconds=time.perf_counter() - started,
+            model_name=f"{self.model_name}-structured-graph",
             model_version=self.model_version,
             warnings=warnings,
         )
@@ -348,6 +429,272 @@ class Qwen3VLCaptioner:
         self._processor = AutoProcessor.from_pretrained(self.model_name, revision=self.model_version)
 
 
+def _graph_visual_prompt(cue: GraphVisualCue | None) -> str:
+    if cue is None or cue.coordinate_plane or cue.state != "plotted" or cue.trend is None:
+        return ""
+    return (
+        f" 시각 검출 결과 다음 형태가 확인되었습니다: {_graph_trend_lead(cue)} "
+        "이 경향을 설명의 앞부분에 분명히 쓰고, 선을 시작점이나 끝점이 있는 것처럼 표현하지 마세요."
+    )
+
+
+def _graph_needs_structured_review(cue: GraphVisualCue) -> bool:
+    return (
+        cue.state == "plotted"
+        and (
+            cue.confidence < 0.9
+            or cue.mark_type in {"multiple", "unknown"}
+            or cue.variation in {"turning", "oscillating"}
+        )
+    )
+
+
+def _structured_graph_prompt() -> str:
+    return (
+        "이미지의 실제 그래프 영역만 보고 아래 JSON 하나만 출력하세요. 도구 모음, 입력표, 확대 삽화, 배경은 제외하세요. "
+        "좌표·수식·절편·점 이름은 출력하지 마세요. "
+        "mark_type은 points, line, curve, multiple, unknown 중 하나, "
+        "overall_trend는 up, down, flat, mixed, unknown 중 하나, "
+        "local_pattern은 monotonic, up_then_down, down_then_up, oscillating, unknown 중 하나를 사용하세요. "
+        '형식: {"has_visible_plot":true,"mark_type":"unknown","series_count":1,'
+        '"overall_trend":"unknown","local_pattern":"unknown"}'
+    )
+
+
+def _parse_structured_graph_response(text: str) -> dict[str, Any] | None:
+    match = re.search(r"\{.*?\}", text, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        value = json.loads(match.group(0))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("has_visible_plot"), bool):
+        return None
+    allowed_marks = {"points", "line", "curve", "multiple", "unknown"}
+    allowed_trends = {"up", "down", "flat", "mixed", "unknown"}
+    allowed_patterns = {"monotonic", "up_then_down", "down_then_up", "oscillating", "unknown"}
+    mark = value.get("mark_type")
+    trend = value.get("overall_trend")
+    pattern = value.get("local_pattern")
+    if mark not in allowed_marks or trend not in allowed_trends or pattern not in allowed_patterns:
+        return None
+    count = value.get("series_count")
+    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 20:
+        count = None
+    return {
+        "has_visible_plot": value["has_visible_plot"],
+        "mark_type": mark,
+        "series_count": count,
+        "overall_trend": trend,
+        "local_pattern": pattern,
+    }
+
+
+def _apply_graph_trend_grounding(text: str, cue: GraphVisualCue | None) -> str:
+    if (
+        cue is None
+        or cue.coordinate_plane
+        or cue.state != "plotted"
+        or cue.trend is None
+        or cue.confidence < 0.8
+    ):
+        return text
+    sentences = [
+        part.strip()
+        for part in re.findall(r".+?(?:[.!?。！？]+|$)", text, flags=re.DOTALL)
+        if part.strip()
+    ]
+    trend_markers = (
+        "우상향", "우하향", "증가", "감소", "상단에서 하단", "하단에서 상단",
+        "위로 향", "아래로 향", "오르내", "올라갔다", "내려갔다",
+    )
+    sentences = [sentence for sentence in sentences if not any(marker in sentence for marker in trend_markers)]
+    lead = _graph_trend_lead(cue)
+    return " ".join([lead, *sentences]).strip()
+
+
+def _graph_trend_lead(cue: GraphVisualCue) -> str:
+    if cue.variation == "oscillating":
+        overall = {
+            "increasing": "전체적으로는 오른쪽으로 갈수록 높아진다.",
+            "decreasing": "전체적으로는 오른쪽으로 갈수록 낮아진다.",
+            "horizontal": "전체 높이는 대체로 비슷하게 유지된다.",
+        }[cue.trend]
+        return f"좌표평면에 위아래로 반복해서 오르내리는 그래프가 표시되어 있으며, {overall}"
+    if cue.variation == "turning":
+        if cue.initial_direction == "increasing":
+            return "좌표평면에 오른쪽으로 가면서 올라갔다가 내려가는 그래프가 표시되어 있다."
+        if cue.initial_direction == "decreasing":
+            return "좌표평면에 오른쪽으로 가면서 내려갔다가 올라가는 그래프가 표시되어 있다."
+        return "좌표평면에 진행 방향이 한 차례 바뀌는 그래프가 표시되어 있다."
+    return {
+        "increasing": "좌표평면에 왼쪽 아래에서 오른쪽 위로 향하는 우상향 그래프가 표시되어 있다.",
+        "decreasing": "좌표평면에 왼쪽 위에서 오른쪽 아래로 향하는 우하향 그래프가 표시되어 있다.",
+        "horizontal": "좌표평면에 왼쪽에서 오른쪽으로 높이가 거의 일정한 그래프가 표시되어 있다.",
+    }[cue.trend]
+
+
+def _grounded_coordinate_graph_caption(
+    cue: GraphVisualCue,
+    evidence: Sequence[str] | None,
+    structure: dict[str, Any] | None = None,
+) -> str:
+    """Compose coordinate-graph prose without asking a VLM to invent relations."""
+    if cue.state == "empty":
+        return "x축과 y축, 격자가 표시된 빈 좌표평면이다."
+
+    sentences = [_structured_graph_lead(cue, structure)]
+    evidence_text = " ".join(str(item) for item in evidence or [])
+    equations = _deduplicated_matches(_EVIDENCE_EQUATION_PATTERN, evidence_text)
+    coordinates = _deduplicated_matches(_EXACT_COORDINATE_PATTERN, evidence_text)
+    if equations:
+        sentences.append(f"그림에는 {', '.join(equations)}가 적혀 있다.")
+    if coordinates:
+        sentences.append(f"또한 {', '.join(coordinates)} 표기가 있다.")
+    return " ".join(sentences)
+
+
+def _structured_graph_lead(cue: GraphVisualCue, structure: dict[str, Any] | None) -> str:
+    if structure is None:
+        if cue.mark_type == "points":
+            return _point_distribution_lead(cue.trend)
+        return _graph_trend_lead(cue) if cue.trend is not None else "좌표평면에 그래프가 표시되어 있다."
+    if not structure["has_visible_plot"]:
+        return "좌표평면이 표시되어 있다."
+
+    mark_type = structure["mark_type"]
+    trend = structure["overall_trend"]
+    pattern = structure["local_pattern"]
+    count = structure.get("series_count")
+    if mark_type == "points":
+        return _point_distribution_lead(_structured_trend(trend))
+
+    subject = "여러 개의 선이나 곡선" if mark_type == "multiple" or (count or 0) >= 2 else (
+        "직선" if mark_type == "line" else "곡선" if mark_type == "curve" else "그래프"
+    )
+    if pattern == "oscillating":
+        overall = {
+            "up": "전체적으로는 오른쪽으로 갈수록 높아진다.",
+            "down": "전체적으로는 오른쪽으로 갈수록 낮아진다.",
+            "flat": "전체 높이는 대체로 비슷하게 유지된다.",
+            "mixed": "각 계열의 전체 방향은 서로 다르다.",
+            "unknown": "",
+        }[trend]
+        return f"좌표평면에 {subject}이 위아래로 반복해서 오르내리며 표시되어 있다. {overall}".strip()
+    if pattern == "up_then_down":
+        return f"좌표평면에 {subject}이 오른쪽으로 가면서 올라갔다가 내려가는 형태로 표시되어 있다."
+    if pattern == "down_then_up":
+        return f"좌표평면에 {subject}이 오른쪽으로 가면서 내려갔다가 올라가는 형태로 표시되어 있다."
+    direction = {
+        "up": "전체적으로 오른쪽으로 갈수록 높아지는",
+        "down": "전체적으로 오른쪽으로 갈수록 낮아지는",
+        "flat": "전체 높이가 대체로 일정한",
+        "mixed": "서로 다른 방향을 보이는",
+        "unknown": "",
+    }[trend]
+    return f"좌표평면에 {direction + ' ' if direction else ''}{subject}이 표시되어 있다."
+
+
+def _structured_trend(value: str) -> str | None:
+    return {"up": "increasing", "down": "decreasing", "flat": "horizontal"}.get(value)
+
+
+def _point_distribution_lead(trend: str | None) -> str:
+    return {
+        "increasing": "좌표평면에 여러 점이 표시되어 있으며, 점들은 오른쪽으로 갈수록 대체로 높게 분포한다.",
+        "decreasing": "좌표평면에 여러 점이 표시되어 있으며, 점들은 오른쪽으로 갈수록 대체로 낮게 분포한다.",
+        "horizontal": "좌표평면에 여러 점이 비슷한 높이로 분포한다.",
+        None: "좌표평면에 여러 점이 분포한다.",
+    }[trend]
+
+
+def _deduplicated_matches(pattern: re.Pattern[str], text: str) -> list[str]:
+    matches: list[str] = []
+    for match in pattern.findall(text):
+        cleaned = re.sub(r"\s+", " ", match).strip()
+        if cleaned and cleaned not in matches:
+            matches.append(cleaned)
+    return matches
+
+
+def _grounding_evidence_prompt(evidence: Sequence[str] | None) -> str:
+    verified = [str(item).strip() for item in evidence or [] if str(item).strip()]
+    if not verified:
+        return (
+            " 이미지 영역에서 별도로 확인된 문자 근거가 없습니다. "
+            "따라서 정확한 수식·좌표·절편값·숫자를 새로 만들지 말고 시각적으로 보이는 형태와 관계만 설명하세요."
+        )
+    joined = " / ".join(verified)[:1200]
+    return (
+        f" 이미지 영역의 PDF 텍스트 또는 OCR에서 확인된 표기는 다음과 같습니다: [{joined}]. "
+        "정확한 수식·좌표·절편값·숫자는 이 표기에 같은 내용이 있을 때만 사용하세요. "
+        "표기에 없는 값을 선의 모양이나 눈금으로 계산하지 말고, 표시된 점을 선의 시작점이나 끝점으로 확대 해석하지 마세요."
+    )
+
+
+_EXACT_COORDINATE_PATTERN = re.compile(
+    r"\(\s*[+-]?(?:\d+(?:\.\d+)?|[A-Za-z])\s*,\s*[+-]?(?:\d+(?:\.\d+)?|[A-Za-z])\s*\)"
+)
+_EXACT_EQUATION_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z](?:\s*\(\s*[A-Za-z]\s*\))?\s*)="
+    r"\s*[+-]?[A-Za-z0-9\\](?:[A-Za-z0-9\\{}\s+\-*/^().]{0,24})"
+)
+_EVIDENCE_EQUATION_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z](?:\s*\(\s*[A-Za-z]\s*\))?)\s*=\s*[+-]?"
+    r"(?:\\frac\s*\{[^{}]+\}\s*\{[^{}]+\}\s*[A-Za-z]?|"
+    r"(?:\d+(?:\.\d+)?\s*)?[A-Za-z]{1,3}(?:\s*[+\-]\s*\d+(?:\.\d+)?)?|"
+    r"\d+(?:\.\d+)?)"
+)
+_EXACT_NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?(?![A-Za-z])")
+
+
+def _compact_grounding_text(text: str) -> str:
+    return re.sub(r"\s+", "", text).lower().replace("×", "*").replace("−", "-")
+
+
+def _remove_unsupported_exact_claims(
+    text: str,
+    evidence: Sequence[str] | None,
+) -> tuple[str, list[str]]:
+    """Drop sentences containing exact values that are absent from OCR/PDF evidence."""
+    evidence_text = " ".join(str(item) for item in evidence or [])
+    supported = _compact_grounding_text(evidence_text)
+    supported_numbers = set(_EXACT_NUMBER_PATTERN.findall(evidence_text))
+    sentences = [
+        part.strip()
+        for part in re.findall(r".+?(?:[.!?。！？]+|$)", text, flags=re.DOTALL)
+        if part.strip()
+    ]
+    kept: list[str] = []
+    removed_claims: list[str] = []
+    for sentence in sentences:
+        structural_claims = (
+            _EXACT_COORDINATE_PATTERN.findall(sentence)
+            + _EXACT_EQUATION_PATTERN.findall(sentence)
+        )
+        unsupported = [
+            claim for claim in structural_claims
+            if _compact_grounding_text(claim) not in supported
+        ]
+        unsupported.extend(
+            claim for claim in _EXACT_NUMBER_PATTERN.findall(sentence)
+            if claim not in supported_numbers
+        )
+        if unsupported:
+            removed_claims.extend(unsupported)
+            continue
+        kept.append(sentence)
+    warnings = []
+    if removed_claims:
+        unique = list(dict.fromkeys(removed_claims))
+        warnings.append(
+            "Removed caption sentence(s) containing exact claims absent from OCR/PDF evidence: "
+            + ", ".join(repr(item) for item in unique)
+        )
+    return " ".join(kept).strip(), warnings
+
+
 def _substitute_stray_hanja(text: str) -> str:
     """Convert stray Han characters (e.g. '\uacfc\u7a0b') back to their Korean reading.
 
@@ -367,6 +714,7 @@ def _substitute_stray_hanja(text: str) -> str:
 def _postprocess_qwen_caption(text: str) -> str:
     """Remove obvious generation artifacts without rewriting valid OCR or math."""
     text = _substitute_stray_hanja(text)
+    text = text.replace(r"\(", "").replace(r"\)", "").replace(r"\[", "").replace(r"\]", "")
     text = text.replace("\ufffd", "").replace("```", "").replace("`", "")
     text = text.replace("**", "")
     text = re.sub(r"(?m)^\s*(?:[-*•]\s+|\d+[.)]\s+|#{1,6}\s*)", "", text)

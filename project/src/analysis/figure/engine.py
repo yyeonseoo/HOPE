@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 
 DEFAULT_MODEL = {"name": "figure-analysis-unconfigured", "version": None}
@@ -21,6 +22,7 @@ class FigureUnderstandingEngine(Protocol):
 def run_figure_engine(
     engine: FigureUnderstandingEngine | None,
     crop_path: str | Path,
+    evidence: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Run an injected model while keeping failures local to one block."""
     if engine is None:
@@ -36,7 +38,12 @@ def run_figure_engine(
         "version": getattr(engine, "model_version", None),
     }
     try:
-        raw = engine.analyze(crop_path)
+        parameters = inspect.signature(engine.analyze).parameters
+        accepts_evidence = "evidence" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        raw = engine.analyze(crop_path, evidence=evidence) if accepts_evidence else engine.analyze(crop_path)
     except Exception as exc:  # One bad figure must not fail the whole page.
         return {"failed": True, "model": model, "warnings": [f"Figure analysis failed: {exc}"]}
 

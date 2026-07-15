@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from .captioners import Qwen3VLCaptioner
 from .openclip_classifier import FigureRouteClassifier
@@ -21,9 +22,18 @@ class HuggingFaceFigureCaptionEngine:
         self.classifier = classifier
         self.captioner = captioner
 
-    def analyze(self, image_path: str | Path) -> dict[str, Any]:
+    def analyze(self, image_path: str | Path, evidence: Sequence[str] | None = None) -> dict[str, Any]:
         prediction = self.classifier.classify(image_path)
-        caption = self.captioner.caption(image_path, prediction.route)
+        parameters = inspect.signature(self.captioner.caption).parameters
+        accepts_evidence = "evidence" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        caption = (
+            self.captioner.caption(image_path, prediction.route, evidence=evidence)
+            if accepts_evidence
+            else self.captioner.caption(image_path, prediction.route)
+        )
         warnings = list(caption.warnings)
         if caption.confidence is None:
             warnings.append("Caption confidence was unavailable from the generation model.")

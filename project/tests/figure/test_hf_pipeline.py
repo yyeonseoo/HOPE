@@ -47,6 +47,12 @@ class FakeCaptioner:
         )
 
 
+class EvidenceCaptioner(FakeCaptioner):
+    def caption(self, image_path, figure_type, evidence=None):
+        self.evidence = evidence
+        return super().caption(image_path, figure_type)
+
+
 class HuggingFacePipelineTests(unittest.TestCase):
     def _image(self, directory):
         path = Path(directory) / "figure.png"
@@ -77,6 +83,14 @@ class HuggingFacePipelineTests(unittest.TestCase):
         self.assertEqual(image.figure_type, "illustration")
         self.assertEqual(output["figure_type"], "illustration")
         self.assertEqual(output["description_model"]["name"], "fake-captioner")
+
+    def test_grounding_evidence_is_passed_to_supporting_captioner(self):
+        captioner = EvidenceCaptioner("직선 옆에 y=ax가 표시되어 있다.")
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("graph"), captioner)
+        with tempfile.TemporaryDirectory() as tmp:
+            engine.analyze(self._image(tmp), evidence=["y=ax", "(1, a)"])
+
+        self.assertEqual(captioner.evidence, ["y=ax", "(1, a)"])
 
     def test_factory_is_lazy_and_uses_qwen(self):
         engine = create_huggingface_figure_engine(device="cpu")

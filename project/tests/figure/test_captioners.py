@@ -5,6 +5,8 @@ from src.analysis.figure.captioners import (
     _find_invalid_month_mentions,
     _find_suspicious_caption_content,
     _postprocess_qwen_caption,
+    _parse_structured_graph_response,
+    _remove_unsupported_exact_claims,
     _substitute_stray_hanja,
 )
 
@@ -42,6 +44,10 @@ class PostprocessQwenCaptionTests(unittest.TestCase):
         self.assertNotIn("**", result)
         self.assertNotIn("```", result)
 
+    def test_removes_only_latex_math_delimiters(self):
+        text = r"\(x\)축과 \(y=ax\)가 표시되어 있다."
+        self.assertEqual(_postprocess_qwen_caption(text), "x축과 y=ax가 표시되어 있다.")
+
     def test_drops_incomplete_trailing_sentence(self):
         text = "이 그래프는 시간에 따라 증가한다. 그 다음에 감소하다가 다시"
         result = _postprocess_qwen_caption(text)
@@ -62,6 +68,55 @@ class PostprocessQwenCaptionTests(unittest.TestCase):
         result = _postprocess_qwen_caption(text)
         self.assertEqual(result, "이 도형은 원통형 모양이다.")
 
+
+class GroundedExactClaimTests(unittest.TestCase):
+    def test_removes_hallucinated_equation_sentence(self):
+        text = "우상향하는 직선이 표시되어 있다. 이 직선은 y=2x+2를 나타낸다."
+        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y", "O"])
+        self.assertEqual(result, "우상향하는 직선이 표시되어 있다.")
+        self.assertTrue(warnings)
+
+    def test_keeps_equation_present_in_evidence(self):
+        text = "직선 옆에 y=ax가 표시되어 있다."
+        result, warnings = _remove_unsupported_exact_claims(text, ["y=ax", "(1, a)"])
+        self.assertEqual(result, text)
+        self.assertEqual(warnings, [])
+
+    def test_removes_unsupported_coordinate_but_keeps_qualitative_sentence(self):
+        text = "직선은 원점을 지난다. y축과의 교점은 (0, 1)이다."
+        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y", "1"])
+        self.assertEqual(result, "직선은 원점을 지난다.")
+        self.assertTrue(warnings)
+
+    def test_does_not_accept_number_as_substring_of_another_value(self):
+        text = "점의 값은 2이다."
+        result, warnings = _remove_unsupported_exact_claims(text, ["12"])
+        self.assertEqual(result, "")
+        self.assertTrue(warnings)
+
+    def test_removes_unsupported_function_notation(self):
+        text = "곡선은 f(x)=2x+1을 나타낸다."
+        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y"])
+        self.assertEqual(result, "")
+        self.assertTrue(warnings)
+
+
+class StructuredGraphResponseTests(unittest.TestCase):
+    def test_parses_json_without_accepting_free_form_claims(self):
+        text = (
+            '```json\n{"has_visible_plot":true,"mark_type":"points","series_count":5,'
+            '"overall_trend":"up","local_pattern":"monotonic"}\n```'
+        )
+        result = _parse_structured_graph_response(text)
+        self.assertEqual(result["mark_type"], "points")
+        self.assertEqual(result["overall_trend"], "up")
+
+    def test_rejects_values_outside_fixed_schema(self):
+        text = (
+            '{"has_visible_plot":true,"mark_type":"point_at_1_2","series_count":1,'
+            '"overall_trend":"up","local_pattern":"monotonic"}'
+        )
+        self.assertIsNone(_parse_structured_graph_response(text))
 
 class InvalidMonthMentionTests(unittest.TestCase):
     def test_valid_months_are_not_flagged(self):
