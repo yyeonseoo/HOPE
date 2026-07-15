@@ -2,6 +2,11 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+def count_formula_parts(latex: Optional[str]) -> int:
+    if latex is None:
+        return 0
+
+    return len([part for part in latex.split(";") if part])
 
 def recognize_formula_from_crop(
     crop_path: Optional[str],
@@ -28,7 +33,12 @@ def recognize_formula_from_crop(
 
     plain_text = normalize_plain_text(fallback_text)
 
+    fallback_source_text = fallback_text if fallback_text is not None else plain_text
+    fallback_latex_candidate = normalize_latex_candidate(fallback_source_text)
+
     model_result = recognize_with_optional_pix2tex(crop_path)
+
+    used_fallback_due_to_part_count = False
 
     if model_result is not None:
         extracted_model_result = extract_formula_from_model_latex(model_result)
@@ -37,21 +47,27 @@ def recognize_formula_from_crop(
             latex = normalize_latex_candidate(extracted_model_result)
 
             if latex is not None:
-                return {
-                    "latex": latex,
-                    "mathml": convert_latex_to_mathml(latex),
-                    "plain_text": plain_text,
-                    "confidence": None,
-                    "model": {
-                        "name": "pix2tex",
-                        "version": None,
-                    },
-                    "warnings": warnings,
-                }
-        warnings.append(
-            "Pix2tex output was rejected as unreliable; fallback recognizer was used."
-        )
-
+                if count_formula_parts(fallback_latex_candidate) > count_formula_parts(latex):
+                    warnings.append(
+                        "Pix2tex recognized fewer formula parts than fallback text; fallback recognizer was used."
+                    )
+                    used_fallback_due_to_part_count = True
+                else:
+                    return {
+                        "latex": latex,
+                        "mathml": convert_latex_to_mathml(latex),
+                        "plain_text": plain_text,
+                        "confidence": None,
+                        "model": {
+                            "name": "pix2tex",
+                            "version": None,
+                        },
+                        "warnings": warnings,
+                    }
+        if not used_fallback_due_to_part_count:
+            warnings.append(
+                "Pix2tex output was rejected as unreliable; fallback recognizer was used."
+            )
     elif crop_path is not None:
         warnings.append(
             "Pix2tex was unavailable or failed; fallback recognizer was used."
@@ -61,8 +77,7 @@ def recognize_formula_from_crop(
         warnings.append("Detected formula block does not contain a formula-like expression.")
         latex = None
     else:
-        latex = normalize_latex_candidate(plain_text)
-
+        latex = fallback_latex_candidate
     if latex is None:
         warnings.append("Formula LaTeX could not be recognized from crop or fallback text.")
 
@@ -338,6 +353,16 @@ def normalize_latex_candidate(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None
 
+    numbered_formula = normalize_numbered_formula_parts(text)
+
+    if numbered_formula is not None:
+        return numbered_formula
+
+    stacked_fraction = normalize_stacked_fraction(text)
+
+    if stacked_fraction is not None:
+        return stacked_fraction
+    
     cleaned = str(text).strip()
 
     if not cleaned:
@@ -470,6 +495,77 @@ def normalize_inline_fraction(text: Optional[str]) -> Optional[str]:
 
     return ";".join(converted_parts)
 
+def normalize_stacked_fraction(text: Optional[str]) -> Optional[str]:
+    """
+    y= a
+    x 처럼 줄바꿈으로 분자/분모가 분리된 세로 분수 OCR 결과를 LaTeX 분수로 변환한다.
+    여러 개의 세로 분수가 함께 있는 경우 ;로 연결한다.
+    y=ax처럼 한 줄로 붙어 있는 정비례식은 변환하지 않는다.
+    """
+
+    if text is None:
+        return None
+
+    expression = re.split(r"\(단|단,", text)[0]
+    expression = expression.replace("`", "").strip()
+
+    stacked_fraction_matches = re.findall(
+        r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]?\s*"
+        r"(?:\([0-9]+\))?\s*"
+        r"([a-zA-Z])\s*=\s*([+-]?)\s*([0-9a-zA-Z]+)\s*\n\s*([0-9a-zA-Z]+)",
+        expression,
+    )
+
+    if not stacked_fraction_matches:
+        return None
+
+    formulas = []
+
+    for left, sign, numerator, denominator in stacked_fraction_matches:
+        formulas.append(rf"{left}={sign}\frac{{{numerator}}}{{{denominator}}}")
+
+    return ";".join(formulas)
+
+def normalize_numbered_formula_parts(text: Optional[str]) -> Optional[str]:
+    """
+    ⑴, ⑵ 또는 (1), (2)처럼 번호가 붙은 여러 수식을 각각 분리해 정규화한다.
+    일반 수식과 세로 분수 수식이 한 블록에 함께 있는 경우를 처리한다.
+    """
+
+    if text is None:
+        return None
+
+    expression = re.split(r"\(단|단,", text)[0]
+    expression = expression.replace("`", "").strip()
+
+    numbered_parts = re.split(
+        r"(?:[⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽]|\([0-9]+\))",
+        expression,
+    )
+
+    numbered_parts = [part.strip() for part in numbered_parts if part.strip()]
+
+    if len(numbered_parts) < 2:
+        return None
+
+    formulas = []
+
+    for part in numbered_parts:
+        stacked_formula = normalize_stacked_fraction(part)
+
+        if stacked_formula is not None:
+            formulas.append(stacked_formula)
+            continue
+
+        normalized_part = normalize_latex_candidate(part)
+
+        if normalized_part is not None:
+            formulas.append(normalized_part)
+
+    if len(formulas) < 2:
+        return None
+
+    return ";".join(formulas)
 
 def normalize_inline_fraction_part(text: str) -> str:
     inline_fraction_match = re.fullmatch(
@@ -681,6 +777,29 @@ def convert_math_token_to_mathml(token: str) -> str:
 
     return f"<mi>{token}</mi>"
 
+def formula_to_accessible_text(latex: str) -> str:
+    """
+    접근성 설명에 LaTeX 원문을 그대로 넣지 않고 자연어 표현으로 바꾼다.
+    """
+
+    latex_fraction_match = re.fullmatch(
+        r"([a-zA-Z])=([+-]?)\\frac\{([^{}]+)\}\{([^{}]+)\}",
+        latex,
+    )
+
+    if latex_fraction_match:
+        left = latex_fraction_match.group(1)
+        sign = latex_fraction_match.group(2)
+        numerator = latex_fraction_match.group(3)
+        denominator = latex_fraction_match.group(4)
+
+        if sign == "-":
+            return f"{left}는 음수 {numerator}를 {denominator}로 나눈 값"
+
+        return f"{left}는 {numerator}를 {denominator}로 나눈 값"
+
+    return latex
+
 def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
     """
     수식 LaTeX를 바탕으로 접근성 설명을 생성한다.
@@ -698,13 +817,13 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
     if ";" in latex:
         parts = [part for part in latex.split(";") if part]
-        readable_parts = ", ".join(parts)
+        readable_parts = ", ".join(formula_to_accessible_text(part) for part in parts)
 
         return {
             "status": "generated",
             "short_text": f"여러 개의 수식입니다: {readable_parts}",
-            "long_text": f"이 영역에는 {len(parts)}개의 수식이 포함되어 있습니다. 각각 {readable_parts} 입니다.",
-            "transcription_notes": "여러 수식은 세미콜론으로 구분하여 점역합니다.",
+            "long_text": f"이 영역에는 {len(parts)}개의 수식이 포함되어 있습니다. {readable_parts}입니다.",
+            "transcription_notes": "여러 수식은 세미콜론으로 구분하여 점역하며, 각 수식의 분자와 분모를 구분해 확인합니다.",
             "review_status": "auto",
         }
 
@@ -731,13 +850,13 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         if sign == "-":
             relation_text = f"{left}와 {denominator}의 곱이 -{numerator}로 일정한 반비례 관계입니다."
             long_text = (
-                f"수식 {latex}는 {left}가 음수 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
+                f"수식은 {left}가 음수 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
                 f"즉, {denominator}의 값이 커질수록 {left}의 절댓값은 작아지는 반비례 관계를 나타냅니다."
             )
         else:
             relation_text = f"{left}와 {denominator}의 곱이 {numerator}로 일정한 반비례 관계입니다."
             long_text = (
-                f"수식 {latex}는 {left}가 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
+                f"수식은 {left}가 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
                 f"즉, {denominator}의 값이 커질수록 {left}의 값은 작아지는 반비례 관계를 나타냅니다."
             )
 
@@ -759,7 +878,7 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         return {
             "status": "generated",
             "short_text": f"{left}는 {numerator}를 {denominator}로 나눈 값입니다.",
-            "long_text": f"수식 {latex}는 {left}가 {numerator} 나누기 {denominator}와 같다는 의미입니다.",
+            "long_text": f"수식은 {left}가 {numerator} 나누기 {denominator}와 같다는 의미입니다.",
             "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역합니다.",
             "review_status": "auto",
         }
