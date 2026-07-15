@@ -347,8 +347,25 @@ class Qwen3VLCaptioner:
         self._processor = AutoProcessor.from_pretrained(self.model_name, revision=self.model_version)
 
 
+def _substitute_stray_hanja(text: str) -> str:
+    """Convert stray Han characters (e.g. '\uacfc\u7a0b') back to their Korean reading.
+
+    Qwen3-VL is trained on plenty of Chinese text and occasionally emits the
+    Han form of a syllable instead of the intended Hangul one -- the same
+    morpheme, wrong script. Unlike the other checks in this module this is
+    safe to auto-correct rather than just warn about, since the character's
+    Sino-Korean reading is a fixed, unambiguous lookup, not a guess.
+    """
+    try:
+        import hanja
+    except ImportError:
+        return text
+    return hanja.translate(text, "substitution")
+
+
 def _postprocess_qwen_caption(text: str) -> str:
     """Remove obvious generation artifacts without rewriting valid OCR or math."""
+    text = _substitute_stray_hanja(text)
     text = text.replace("\ufffd", "").replace("```", "").replace("`", "")
     text = text.replace("**", "")
     text = re.sub(r"(?m)^\s*(?:[-*•]\s+|\d+[.)]\s+|#{1,6}\s*)", "", text)

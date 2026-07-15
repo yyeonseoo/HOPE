@@ -5,7 +5,27 @@ from src.analysis.figure.captioners import (
     _find_invalid_month_mentions,
     _find_suspicious_caption_content,
     _postprocess_qwen_caption,
+    _substitute_stray_hanja,
 )
+
+
+class SubstituteStrayHanjaTests(unittest.TestCase):
+    def test_stray_hanja_is_converted_to_its_korean_reading(self):
+        self.assertEqual(_substitute_stray_hanja("과程이 시작되며"), "과정이 시작되며")
+
+    def test_parenthetical_hanja_gloss_is_converted(self):
+        text = "이 그래프는 시간(時間)과 거리(距離)의 관계를 보여준다."
+        expected = "이 그래프는 시간(시간)과 거리(거리)의 관계를 보여준다."
+        self.assertEqual(_substitute_stray_hanja(text), expected)
+
+    def test_pure_hangul_text_is_unchanged(self):
+        text = "이 그래프는 시간과 거리의 관계를 보여준다."
+        self.assertEqual(_substitute_stray_hanja(text), text)
+
+    def test_postprocess_applies_hanja_substitution(self):
+        result = _postprocess_qwen_caption("이후, 거리 값이 다시 감소하는 과程이 시작되며 끝난다.")
+        self.assertIn("과정", result)
+        self.assertNotIn("程", result)
 
 
 class PostprocessQwenCaptionTests(unittest.TestCase):
