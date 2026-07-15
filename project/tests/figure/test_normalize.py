@@ -24,6 +24,20 @@ class FigureNormalizationTests(unittest.TestCase):
         self.assertEqual(output["analysis"]["result"]["series"], [])
         self.assertTrue(output["warnings"])
 
+    def test_description_only_chart_without_extracted_data_is_success(self):
+        output = build_figure_analysis(
+            {
+                "model": {"name": "hf-caption-engine", "version": "1"},
+                "confidence": 0.82,
+                "figure_type": "graph",
+                "description_only": True,
+            }
+        )
+
+        self.assertEqual(output["analysis"]["status"], "success")
+        self.assertEqual(output["analysis"]["result"]["series"], [])
+        self.assertEqual(output["warnings"], [])
+
     def test_other_figure_without_any_semantics_is_partial(self):
         output = build_figure_analysis(
             {

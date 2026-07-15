@@ -39,6 +39,7 @@ class HuggingFaceFigureCaptionEngine:
             "description_confidence": caption.confidence,
             "generation_time_seconds": caption.generation_time_seconds,
             "warnings": warnings,
+            "description_only": True,
         }
 
 

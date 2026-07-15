@@ -83,8 +83,13 @@ def build_figure_analysis(raw: Mapping[str, Any]) -> dict[str, Any]:
     if figure_type == "unknown":
         status = "partial"
         warnings.append("Figure type was not recognized.")
-    elif figure_type in CHART_TYPES | {"other"} and not (
-        result["title"] or result["x_axis"] or result["y_axis"] or result["series"]
+    elif (
+        # A description-only engine (e.g. the HF caption pipeline) never
+        # attempts x_axis/y_axis/series, so their absence isn't a partial
+        # result -- it's just not that engine's job.
+        not raw.get("description_only")
+        and figure_type in CHART_TYPES | {"other"}
+        and not (result["title"] or result["x_axis"] or result["y_axis"] or result["series"])
     ):
         status = "partial"
         warnings.append("Figure output did not contain a title, axes, or data series.")

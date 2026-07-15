@@ -65,6 +65,7 @@ class HuggingFacePipelineTests(unittest.TestCase):
         self.assertEqual(output["confidence"], 0.82)
         self.assertEqual(output["description_confidence"], 0.71)
         self.assertEqual(output["generation_time_seconds"], 0.25)
+        self.assertTrue(output["description_only"])
 
     def test_illustration_route_is_passed_to_captioner(self):
         image = FakeCaptioner("두 사람이 걷는 삽화다.")
