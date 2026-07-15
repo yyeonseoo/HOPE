@@ -65,9 +65,11 @@ def analyze_single_formula_block(
         page_id=page_id,
     )
 
+    raw_formula_text = block.get("text")
+
     recognition = recognize_formula_from_crop(
-        crop_path=crop_path,
-        fallback_text=plain_text,
+    crop_path,
+    raw_formula_text,
     )
 
     latex = recognition.get("latex")
