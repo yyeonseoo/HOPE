@@ -37,6 +37,20 @@ class FailingEngine:
         raise RuntimeError("test failure")
 
 
+class FakeCaptionEngine(FakeChartEngine):
+    def analyze(self, image_path):
+        output = super().analyze(image_path)
+        output.update(
+            {
+                "description_text": "연도별 매출을 나타낸 선그래프다.",
+                "description_model": {"name": "fake-captioner", "version": "test-2"},
+                "description_confidence": 0.76,
+                "generation_time_seconds": 0.42,
+            }
+        )
+        return output
+
+
 class FigureAnalyzerTests(unittest.TestCase):
     def setUp(self):
         self.validator = Draft202012Validator(SCHEMA)
@@ -79,6 +93,15 @@ class FigureAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["analysis"]["status"], "partial")
         self.assertEqual(result["analysis"]["result"]["figure_type"], "unknown")
         self.assertIn("not configured", " ".join(result["warnings"]))
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_generated_description_records_confidence_and_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=FakeCaptionEngine())[0]
+
+        self.assertEqual(result["description"]["short_text"], "연도별 매출을 나타낸 선그래프다.")
+        self.assertEqual(result["description"]["confidence"], 0.76)
+        self.assertEqual(result["description"]["generation_time_seconds"], 0.42)
         self.assertEqual(list(self.validator.iter_errors(result)), [])
 
     def test_engine_failure_is_isolated_to_the_block(self):

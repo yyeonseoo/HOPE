@@ -124,6 +124,8 @@
             { "type": "null" }
           ]
         },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "generation_time_seconds": { "type": ["number", "null"], "minimum": 0 },
         "short_text": { "type": ["string", "null"] },
         "long_text": { "type": ["string", "null"] },
         "transcription_notes": { "type": ["string", "null"] },
@@ -190,7 +192,7 @@
       "required": ["kind", "figure_type", "title", "x_axis", "y_axis", "series"],
       "properties": {
         "kind": { "const": "figure" },
-        "figure_type": { "enum": ["line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "illustration", "photo", "other", "unknown"] },
+        "figure_type": { "enum": ["graph", "table", "mathematical_diagram", "illustration", "photo", "line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "other", "unknown"] },
         "title": { "type": ["string", "null"] },
         "x_axis": { "$ref": "#/$defs/axis" },
         "y_axis": { "$ref": "#/$defs/axis" },

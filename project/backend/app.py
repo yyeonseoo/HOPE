@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -13,13 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+for _path in (ROOT_DIR, SRC_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from ocr import _load_paddleocr
 from pdf_text import extract_pdf_text_lines
 from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
+from analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
+from analysis.table import analyze_table_blocks
 
 app = FastAPI(title="Textbook Layout Parser API")
 
@@ -38,7 +42,21 @@ app.add_middleware(
 
 _OCR_ENGINES = {}
 _ANALYSIS_LOCK = asyncio.Lock()
+_FIGURE_ENGINES = {}
+_FIGURE_ANALYSIS_LOCK = asyncio.Lock()
 LAYOUT_MODES = {"doclayout_yolo", "doclayout_yolo_raw", "doclayout_yolo_unit3"}
+
+
+def _get_figure_engine(request_enabled: bool):
+    enabled_by_environment = os.getenv("HOPE_FIGURE_CAPTIONING", "0").strip().lower() in {"1", "true", "yes", "on"}
+    enabled = request_enabled or enabled_by_environment
+    if not enabled:
+        return None
+    device = os.getenv("HOPE_FIGURE_DEVICE", "auto")
+    cache_key = (device, "qwen3-vl-2b")
+    if cache_key not in _FIGURE_ENGINES:
+        _FIGURE_ENGINES[cache_key] = create_huggingface_figure_engine(device=device)
+    return _FIGURE_ENGINES[cache_key]
 
 
 def _get_ocr_engine(lang: str):
@@ -130,6 +148,7 @@ async def analyze_page(
     lang: str = Form("korean"),
     layout_model: str = Form("doclayout_yolo"),
     yolo_model_path: Optional[str] = Form(None),
+    figure_captioning: bool = Form(False),
 ):
     with tempfile.TemporaryDirectory(prefix="textbook_layout_") as tmp:
         tmp_dir = Path(tmp)
@@ -157,6 +176,19 @@ async def analyze_page(
             result["page"],
             page_image_path=result["page_image_path"],
         )
+        semantic_analyses.extend(
+            analyze_table_blocks(result["page"], str(result["page_image_path"]))
+        )
+        figure_engine = _get_figure_engine(figure_captioning)
+        if figure_engine is not None:
+            async with _FIGURE_ANALYSIS_LOCK:
+                figure_analyses = await asyncio.to_thread(
+                    analyze_figure_blocks,
+                    result["page"],
+                    result["page_image_path"],
+                    figure_engine,
+                )
+            semantic_analyses.extend(figure_analyses)
 
         return {
             "page_count": page_count,
@@ -166,4 +198,6 @@ async def analyze_page(
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],
             "layout_mode": result["layout_mode"],
+            "figure_captioning_enabled": figure_engine is not None,
+            "figure_caption_model": "Qwen/Qwen3-VL-2B-Instruct" if figure_engine is not None else None,
         }

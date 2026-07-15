@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -265,8 +266,8 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("y=ax (단, a는 0이 아니다.)", "y=ax"),
             ("a>0", "a>0"),
             ("a<0", "a<0"),
-            ("y=6/x", "y=6/x"),
-            ("y = 4 / x", "y=4/x"),
+            ("y=6/x", r"y=\frac{6}{x}"),
+            ("y = 4 / x", r"y=\frac{4}{x}"),
             ("y=;2!;x", r"y=\frac{1}{2}x"),
             ("y=;3@;x", r"y=\frac{2}{3}x"),
             ("(1, a)", "(1,a)"),
@@ -277,9 +278,25 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("식 y=800x", "y=800x"),
             ("⑴ y=4x ⑵ y=-3x", "y=4x;y=-3x"),
             ("(1) y=4x (2) y=-3x", "y=4x;y=-3x"),
-            ("⑴ y=8/x ⑵ y=-8/x", "y=8/x;y=-8/x"),
+            ("⑴ y=8/x ⑵ y=-8/x", r"y=\frac{8}{x};y=-\frac{8}{x}"),
             ("y=ax의 그래프", "y=ax"),
             ("y=ax`", "y=ax"),
+            ("y=a/x", r"y=\frac{a}{x}"),
+            ("y = a / x", r"y=\frac{a}{x}"),
+            ("y=a÷x", r"y=\frac{a}{x}"),
+            ("y=12/5", r"y=\frac{12}{5}"),
+            ("y=-a/x", r"y=-\frac{a}{x}"),
+            ("⑴ y=a/x ⑵ y=-a/x", r"y=\frac{a}{x};y=-\frac{a}{x}"),
+            ("y=ax", "y=ax"),
+            ("y= a\nx`(단, a는 0이 아니다.)", r"y=\frac{a}{x}"),
+            ("y= 8\nx", r"y=\frac{8}{x}"),
+            ("y= -8\nx", r"y=-\frac{8}{x}"),
+            ("y=ax", "y=ax"),
+            ("⑴ y= 8\nx ⑵ y= -8\nx", r"y=\frac{8}{x};y=-\frac{8}{x}"),
+            ("(1) y= 8\nx (2) y= -8\nx", r"y=\frac{8}{x};y=-\frac{8}{x}"),
+            ("⑴ y=4x\n⑵ y=- 2\nx", r"y=4x;y=-\frac{2}{x}"),
+            ("(1) y=4x\n(2) y=- 2\nx", r"y=4x;y=-\frac{2}{x}"),
+            ("⑴ y=4x ⑵ y=-2/x", r"y=4x;y=-\frac{2}{x}"),
         ]
 
         for input_text, expected_latex in cases:
@@ -308,6 +325,8 @@ class TestFormulaAnalyzer(unittest.TestCase):
             r"y=-\frac{8}{x}",
             r"y=\frac{12}{5}",
             r"y=\frac{a}{x}",
+            r"y=-\frac{a}{x}",
+            r"y=\frac{12}{5}",
         ]
 
         for latex in cases:
@@ -357,6 +376,21 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertFalse(is_reliable_model_latex(bad_latex))
         self.assertTrue(is_reliable_model_latex("y=ax"))
         self.assertTrue(is_reliable_model_latex(r"y=\frac{1}{2}x"))
+        
+    @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
+    def test_fallback_used_when_text_has_more_formula_parts_than_pix2tex(self, mock_pix2tex):
+        mock_pix2tex.return_value = r"y=\frac{8}{x}"
+
+        result = recognize_formula_from_crop(
+            "fake_crop.png",
+            "⑴ y= 8\nx\n⑵ y=- 8\nx",
+        )
+
+        self.assertEqual(result["latex"], r"y=\frac{8}{x};y=-\frac{8}{x}")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertTrue(
+            any("fewer formula parts" in warning for warning in result["warnings"])
+        )
 
     @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
     def test_warning_when_pix2tex_output_is_rejected(self, mock_pix2tex):

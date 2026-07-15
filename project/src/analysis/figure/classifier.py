@@ -11,6 +11,9 @@ FIGURE_TYPES = {
     "diagram",
     "illustration",
     "photo",
+    "graph",
+    "table",
+    "mathematical_diagram",
     "other",
     "unknown",
 }
@@ -24,8 +27,7 @@ ALIASES = {
     "scatter": "scatter_plot",
     "scatter_chart": "scatter_plot",
     "image": "illustration",
-    "graph": "other",
-    "chart": "other",
+    "chart": "graph",
 }
 
 

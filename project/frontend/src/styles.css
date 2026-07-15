@@ -255,6 +255,30 @@ select {
   padding: 14px;
 }
 
+.model-field small {
+  color: #687681;
+  line-height: 1.45;
+}
+
+.toggle-field {
+  align-items: center;
+  background: #f4f7f9;
+  border-radius: 6px;
+  color: #293844;
+  cursor: pointer;
+  display: flex;
+  font-size: 14px;
+  font-weight: 700;
+  gap: 9px;
+  padding: 11px 12px;
+}
+
+.toggle-field input {
+  height: 17px;
+  margin: 0;
+  width: 17px;
+}
+
 .result-workspace {
   min-width: 0;
   overflow: hidden;
@@ -439,6 +463,30 @@ select {
 .description-output p {
   line-height: 1.6;
   margin: 4px 0 0;
+}
+
+.description-metrics {
+  background: #f4f7f9;
+  border-radius: 6px;
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.description-metrics div {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+.description-metrics dt {
+  color: #687681;
+}
+
+.description-metrics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .review-badge {

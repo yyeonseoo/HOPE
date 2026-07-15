@@ -1825,7 +1825,9 @@ def _postprocess_blocks(blocks: List[Dict], page_width: Optional[int], page_heig
             block["type"] = "paragraph"
         elif _looks_like_header_box(text):
             block["type"] = "section_title"
-        elif block["type"] == "table" and _looks_like_prose_paragraph(text):
+        elif block["type"] == "table" and (
+            _looks_like_prose_paragraph(text) or _looks_like_long_sentence(text)
+        ):
             block["type"] = "paragraph"
         elif block["type"] in {"table", "paragraph", "formula"} and _looks_like_formula_block(text):
             block["type"] = "formula"

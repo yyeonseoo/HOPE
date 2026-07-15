@@ -102,7 +102,16 @@ def run_table_engine(engine, crop: np.ndarray) -> Optional[Dict]:
     if not html:
         return None
 
-    return {"html": html, "confidence": None}
+    return {
+        "html": html,
+        "confidence": None,
+        # Crop-local pixel boxes, one per physical <td>/<th> cell, in the
+        # same document order pix2struct-style table models emit their HTML
+        # cells in. Used by formula_cells.py to crop individual cells for
+        # formula-OCR re-recognition; None/mismatched-length callers simply
+        # skip that step (see html_parser.parse_html_table).
+        "cell_box_list": best.get("cell_box_list") or [],
+    }
 
 
 def _table_cell_area(table_res: Dict) -> float:
