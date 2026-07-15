@@ -316,13 +316,15 @@ class Qwen3VLCaptioner:
             clean_up_tokenization_spaces=False,
         )[0].strip()
         text = _postprocess_qwen_caption(text)
+        warnings = [] if text else ["Qwen3-VL returned an empty caption."]
+        warnings += _find_suspicious_caption_content(text)
         return CaptionOutput(
             text=text,
             confidence=_sequence_confidence(self._model, generated),
             generation_time_seconds=elapsed,
             model_name=self.model_name,
             model_version=self.model_version,
-            warnings=[] if text else ["Qwen3-VL returned an empty caption."],
+            warnings=warnings,
         )
 
     def _load(self, torch: Any) -> None:
@@ -371,6 +373,43 @@ def _postprocess_qwen_caption(text: str) -> str:
         seen.add(key)
         kept.append(sentence)
     return " ".join(kept).strip()
+
+
+def _find_invalid_month_mentions(text: str) -> list[str]:
+    """Flag Korean month mentions like '27월' that cannot exist on any calendar.
+
+    A model that cannot actually read a fine-grained axis tick sometimes
+    invents a precise-looking value instead of leaving it unread. An
+    out-of-range month is an unambiguous, checkable sign of that.
+    """
+    warnings = []
+    for match in re.finditer(r"(\d{1,3})월", text):
+        if not 1 <= int(match.group(1)) <= 12:
+            warnings.append(f"Caption references an impossible month value: {match.group(0)!r}.")
+    return list(dict.fromkeys(warnings))
+
+
+def _find_incomplete_numbered_list(text: str) -> list[str]:
+    """Flag captions that promise a numbered range like '(1)부터 (4)까지' but
+    then never actually describe every item in that range."""
+    match = re.search(r"\(1\)\s*부터\s*\((\d+)\)\s*까지", text)
+    if not match:
+        return []
+    declared_count = int(match.group(1))
+    if not 1 <= declared_count <= 20:
+        return []
+    # Only count markers after the declaration itself, so "(1)부터 (4)까지" doesn't
+    # count as having already described item 4.
+    present = {int(marker) for marker in re.findall(r"\((\d+)\)", text[match.end():])}
+    missing = sorted(number for number in range(1, declared_count + 1) if number not in present)
+    if missing:
+        return [f"Caption declares {declared_count} numbered items but never describes {missing}."]
+    return []
+
+
+def _find_suspicious_caption_content(text: str) -> list[str]:
+    """Best-effort detectors for fabricated or self-contradictory generated content."""
+    return _find_invalid_month_mentions(text) + _find_incomplete_numbered_list(text)
 
 
 def _collapse_adjacent_repeated_phrases(text: str) -> str:
