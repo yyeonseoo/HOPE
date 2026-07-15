@@ -836,6 +836,97 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
             "review_status": "auto",
         }
     
+    arithmetic_division_match = re.fullmatch(
+        r"([0-9]+)\s*(?:/|\\div|÷)\s*([0-9]+)=([0-9]+)(?:\(([^()]+)\))?",
+        latex,
+    )
+
+    if arithmetic_division_match:
+        dividend = arithmetic_division_match.group(1)
+        divisor = arithmetic_division_match.group(2)
+        quotient = arithmetic_division_match.group(3)
+        unit = arithmetic_division_match.group(4)
+
+        unit_note = f" 괄호 안의 '{unit}'은 결과 단위로 확인합니다." if unit else ""
+
+        return {
+            "status": "generated",
+            "short_text": f"{dividend}을 {divisor}으로 나누면 {quotient}입니다.",
+            "long_text": (
+                f"이 수식은 {dividend}을 {divisor}으로 나눈 결과가 "
+                f"{quotient}임을 나타냅니다."
+            ),
+            "transcription_notes": (
+                "나눗셈 기호와 등호를 구분하여 점역합니다."
+                f"{unit_note}"
+            ),
+            "review_status": "auto",
+        }
+
+    arithmetic_operation_match = re.fullmatch(
+        r"([0-9]+)\s*(\+|-|\\times|×|\*)\s*([0-9]+)=([0-9]+)(?:\(([^()]+)\))?",
+        latex,
+    )
+
+    if arithmetic_operation_match:
+        left_number = arithmetic_operation_match.group(1)
+        operator = arithmetic_operation_match.group(2)
+        right_number = arithmetic_operation_match.group(3)
+        result_number = arithmetic_operation_match.group(4)
+        unit = arithmetic_operation_match.group(5)
+
+        operator_text_map = {
+            "+": "더하면",
+            "-": "빼면",
+            r"\times": "곱하면",
+            "×": "곱하면",
+            "*": "곱하면",
+        }
+
+        operator_text = operator_text_map.get(operator, "계산하면")
+        unit_text = f" {unit}" if unit else ""
+
+        return {
+            "status": "generated",
+            "short_text": f"{left_number}과 {right_number}을 계산하면 {result_number}{unit_text}입니다.",
+            "long_text": (
+                f"이 수식은 {left_number}에 {right_number}을 {operator_text} "
+                f"{result_number}{unit_text}이 된다는 의미입니다."
+            ),
+            "transcription_notes": "연산 기호와 등호를 구분하여 점역하고, 괄호 안 단위가 있으면 결과 단위로 함께 확인합니다.",
+            "review_status": "auto",
+        }
+
+    inequality_match = re.fullmatch(
+        r"([a-zA-Z0-9]+)\s*([<>≤≥])\s*([a-zA-Z0-9]+)",
+        latex,
+    )
+
+    if inequality_match:
+        left_value = inequality_match.group(1)
+        operator = inequality_match.group(2)
+        right_value = inequality_match.group(3)
+
+        operator_text_map = {
+            ">": "보다 큽니다",
+            "<": "보다 작습니다",
+            "≤": "보다 작거나 같습니다",
+            "≥": "보다 크거나 같습니다",
+        }
+
+        operator_text = operator_text_map.get(operator, "비교 관계입니다")
+
+        return {
+            "status": "generated",
+            "short_text": f"{left_value}는 {right_value}{operator_text}.",
+            "long_text": (
+                f"이 부등식은 {left_value}와 {right_value}의 크기 관계를 나타냅니다. "
+                f"{left_value}는 {right_value}{operator_text}."
+            ),
+            "transcription_notes": "부등호 방향이 의미를 결정하므로 점역 전 부등호 방향을 확인합니다.",
+            "review_status": "auto",
+        }
+
     latex_fraction_match = re.fullmatch(
         r"([a-zA-Z])=([+-]?)\\frac\{([^{}]+)\}\{([^{}]+)\}",
         latex,
@@ -917,5 +1008,24 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
             "short_text": short_text,
             "long_text": long_text,
             "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하고, 계수와 변수의 관계를 함께 설명합니다.",
+            "review_status": "auto",
+        }
+    simple_equation_match = re.fullmatch(
+        r"(.+)=([^=]+)",
+        latex,
+    )
+
+    if simple_equation_match and any(char.isdigit() for char in latex):
+        left_expression = simple_equation_match.group(1)
+        right_expression = simple_equation_match.group(2)
+
+        return {
+            "status": "generated",
+            "short_text": f"{left_expression}의 값은 {right_expression}입니다.",
+            "long_text": (
+                f"이 수식은 등호를 기준으로 왼쪽 식 {left_expression}과 "
+                f"오른쪽 값 {right_expression}이 같다는 의미입니다."
+            ),
+            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하여 점역합니다.",
             "review_status": "auto",
         }
