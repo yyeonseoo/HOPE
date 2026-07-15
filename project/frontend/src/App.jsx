@@ -149,6 +149,10 @@ function formatFormulaWarning(warning) {
   if (!warning) {
     return "";
   }
+  
+  if (warning.includes("fewer formula parts")) {
+    return "pix2tex 이미지 수식 인식 결과가 일부 수식만 포함하여, OCR 기반 보정 결과를 사용했습니다. 원본 수식과 변환 결과를 함께 확인해 주세요.";
+  }
 
   if (warning.includes("rejected as unreliable")) {
     return "pix2tex 이미지 수식 인식 결과가 신뢰도 기준을 통과하지 못해 OCR 기반 보정 결과를 사용했습니다. 점역 전 원본 수식 확인이 필요합니다.";
