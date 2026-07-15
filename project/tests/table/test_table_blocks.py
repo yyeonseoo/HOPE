@@ -153,6 +153,11 @@ class AnalyzeTableBlocksTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertTrue(any("검수" in warning for warning in results[0]["warnings"]))
+        # Cells we already don't trust enough to keep as a table shouldn't be
+        # shown at all -- downgrade to failed/no-result rather than
+        # presenting fabricated-looking table content next to the warning.
+        self.assertEqual(results[0]["analysis"]["status"], "failed")
+        self.assertIsNone(results[0]["analysis"]["result"])
 
     def test_missing_detector_and_score_default_to_null(self):
         page = _page([{"block_id": "p9_b1", "type": "table", "bbox": [0, 0, 10, 10]}])

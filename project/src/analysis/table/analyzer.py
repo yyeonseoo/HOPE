@@ -113,20 +113,26 @@ def _analyze_single_table_block(
 def _flag_if_not_a_real_table(output: Dict[str, Any]) -> Dict[str, Any]:
     """For blocks the layout model already tagged `table` (unlike the
     figure/formula reclassification path, we can't just drop these -- the
-    schema requires a `table`-type record for them), add a warning when the
-    recognized structure doesn't clear the same real-table bar used for
-    reclassification (see `_looks_like_real_table`). This surfaces layout
-    misclassifications (e.g. a fill-in-the-blank paragraph about "2배, 3배,
-    1/2배..." getting boxed as a table by the upstream layout model) as a
-    reviewable warning instead of silently presenting a bogus table.
+    schema requires a `table`-type record for them), downgrade to a
+    `failed` result with no cells when the recognized structure doesn't
+    clear the same real-table bar used for reclassification (see
+    `_looks_like_real_table`). We already don't trust this read enough to
+    reclassify a figure/formula block on it -- presenting its cells here
+    anyway (just with an extra warning bolted on) would show fabricated-
+    looking table content the reviewer has no reason to trust either. This
+    surfaces layout misclassifications (e.g. a fill-in-the-blank paragraph
+    about "2배, 3배, 1/2배..." getting boxed as a table by the upstream
+    layout model) as a clear failure with a warning explaining why, not a
+    table that merely looks suspicious.
     """
     if output["analysis"].get("status") == "failed":
         return output
     if _looks_like_real_table(output["analysis"]):
         return output
 
+    model = output["analysis"]["model"]
     return {
-        **output,
+        "analysis": {"status": "failed", "model": model, "confidence": None, "result": None},
         "warnings": output["warnings"]
         + ["표 구조 인식 결과가 실제 표 형태로 보이지 않습니다. 레이아웃 분류가 잘못됐을 수 있어 검수가 필요합니다."],
     }
