@@ -848,13 +848,14 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         unit = arithmetic_division_match.group(4)
 
         unit_note = f" 괄호 안의 '{unit}'은 결과 단위로 확인합니다." if unit else ""
+        unit_text = f" {unit}" if unit else ""
 
         return {
             "status": "generated",
-            "short_text": f"{dividend}을 {divisor}으로 나누면 {quotient}입니다.",
+            "short_text": f"{dividend}을 {divisor}으로 나누면 {quotient}{unit_text}입니다.",
             "long_text": (
                 f"이 수식은 {dividend}을 {divisor}으로 나눈 결과가 "
-                f"{quotient}임을 나타냅니다."
+                f"{quotient}{unit_text}임을 나타냅니다."
             ),
             "transcription_notes": (
                 "나눗셈 기호와 등호를 구분하여 점역합니다."
