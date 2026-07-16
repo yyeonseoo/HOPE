@@ -1,6 +1,7 @@
 import unittest
 
 from src.analysis.figure.captioners import (
+    _collapse_decimal_point_spacing,
     _find_incomplete_numbered_list,
     _find_invalid_month_mentions,
     _find_suspicious_caption_content,
@@ -26,6 +27,25 @@ class SubstituteStrayHanjaTests(unittest.TestCase):
         result = _postprocess_qwen_caption("이후, 거리 값이 다시 감소하는 과程이 시작되며 끝난다.")
         self.assertIn("과정", result)
         self.assertNotIn("程", result)
+
+
+class CollapseDecimalPointSpacingTests(unittest.TestCase):
+    def test_removes_space_after_decimal_point(self):
+        self.assertEqual(_collapse_decimal_point_spacing("0. 6"), "0.6")
+
+    def test_handles_negative_numbers_and_units(self):
+        text = "y축은 -0. 6℃에서 1. 0℃까지의 범위를 가집니다."
+        expected = "y축은 -0.6℃에서 1.0℃까지의 범위를 가집니다."
+        self.assertEqual(_collapse_decimal_point_spacing(text), expected)
+
+    def test_normal_sentence_boundary_after_a_number_is_untouched(self):
+        text = "정답은 5. 다음 문제로 넘어갑니다."
+        self.assertEqual(_collapse_decimal_point_spacing(text), text)
+
+    def test_postprocess_applies_decimal_spacing_fix(self):
+        result = _postprocess_qwen_caption("y축은 -0. 6℃에서 1. 0℃까지입니다.")
+        self.assertIn("-0.6", result)
+        self.assertIn("1.0", result)
 
 
 class PostprocessQwenCaptionTests(unittest.TestCase):
