@@ -53,6 +53,24 @@ class EvidenceCaptioner(FakeCaptioner):
         return super().caption(image_path, figure_type)
 
 
+class ContextCaptioner(FakeCaptioner):
+    def caption(self, image_path, figure_type, evidence=None, context=None):
+        self.context = context
+        base = super().caption(image_path, figure_type)
+        return CaptionOutput(
+            text=base.text,
+            confidence=base.confidence,
+            generation_time_seconds=base.generation_time_seconds,
+            model_name=base.model_name,
+            model_version=base.model_version,
+            context_block_ids=tuple(item["block_id"] for item in context or []),
+        )
+
+
+class InlineContextCaptioner(ContextCaptioner):
+    handles_context_inline = True
+
+
 class HuggingFacePipelineTests(unittest.TestCase):
     def _image(self, directory):
         path = Path(directory) / "figure.png"
@@ -91,6 +109,47 @@ class HuggingFacePipelineTests(unittest.TestCase):
             engine.analyze(self._image(tmp), evidence=["y=ax", "(1, a)"])
 
         self.assertEqual(captioner.evidence, ["y=ax", "(1, a)"])
+
+    def test_context_is_passed_and_reported(self):
+        captioner = ContextCaptioner("문맥을 이용한 설명이다.")
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("graph"), captioner)
+        context = [{"block_id": "p2_b4", "type": "paragraph", "score": 1.0, "text": "y=a/x의 그래프"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = engine.analyze(self._image(tmp), context=context)
+
+        self.assertIsNone(captioner.context)
+        self.assertTrue(output["context_used"])
+        self.assertEqual(output["context_block_ids"], ["p2_b4"])
+
+    def test_inline_context_captioner_receives_context_in_single_call(self):
+        captioner = InlineContextCaptioner("문맥을 이용한 설명이다.")
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("graph"), captioner)
+        context = [{"block_id": "p2_b4", "type": "paragraph", "score": 1.0, "text": "y=a/x의 그래프"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = engine.analyze(self._image(tmp), context=context)
+
+        self.assertEqual(captioner.context, context)
+        self.assertTrue(output["context_used"])
+        self.assertEqual(captioner.calls, 1)
+
+    def test_photo_ignores_unrelated_paragraph_context(self):
+        captioner = ContextCaptioner("해안 도로가 보이는 사진이다.")
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("photo"), captioner)
+        context = [{"block_id": "p2_b4", "type": "paragraph", "score": 1.0, "text": "전기 요금의 정비례 관계"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = engine.analyze(self._image(tmp), context=context)
+
+        self.assertIsNone(captioner.context)
+        self.assertFalse(output["context_used"])
+
+    def test_photo_keeps_direct_caption_context(self):
+        captioner = ContextCaptioner("해안 도로가 보이는 사진이다.")
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("photo"), captioner)
+        context = [{"block_id": "p2_b5", "type": "caption", "score": 1.0, "text": "해안 도로"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            engine.analyze(self._image(tmp), context=context)
+
+        self.assertIsNone(captioner.context)
 
     def test_factory_is_lazy_and_uses_qwen(self):
         engine = create_huggingface_figure_engine(device="cpu")

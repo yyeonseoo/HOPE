@@ -20,6 +20,9 @@ class GraphVisualCue:
     coordinate_plane: bool = False
     mark_type: Literal["points", "line", "multiple", "unknown"] = "unknown"
     series_count: int | None = None
+    path_shape: Literal["straight_segments", "smooth_curve"] | None = None
+    bend_count: int = 0
+    direction_sequence: tuple[Literal["increasing", "decreasing", "horizontal"], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,8 @@ class _ColoredPathDetection:
     points: np.ndarray
     mark_type: Literal["points", "line", "multiple"]
     series_count: int
+    path_shape: Literal["straight_segments", "smooth_curve"] | None = None
+    bend_count: int = 0
 
 
 def analyze_graph_visual(image: Image.Image) -> GraphVisualCue:
@@ -40,7 +45,7 @@ def analyze_graph_visual(image: Image.Image) -> GraphVisualCue:
     colored = _colored_path_detection(rgb)
 
     if colored is not None:
-        trend, variation, changes, initial = _curve_features(colored.points)
+        trend, variation, changes, initial, directions = _curve_features(colored.points)
         return GraphVisualCue(
             "plotted",
             trend,
@@ -51,14 +56,17 @@ def analyze_graph_visual(image: Image.Image) -> GraphVisualCue:
             coordinate_grid,
             colored.mark_type,
             colored.series_count,
+            colored.path_shape,
+            colored.bend_count,
+            directions,
         )
 
     non_axis_points = _largest_non_axis_path(gray)
     if non_axis_points is not None:
-        trend, variation, changes, initial = _curve_features(non_axis_points)
+        trend, variation, changes, initial, directions = _curve_features(non_axis_points)
         return GraphVisualCue(
             "plotted", trend, 0.84, variation, changes, initial,
-            coordinate_grid, "unknown", None,
+            coordinate_grid, "unknown", None, direction_sequence=directions,
         )
 
     if diagonal_lines:
@@ -97,10 +105,13 @@ def _colored_path_detection(rgb: np.ndarray) -> _ColoredPathDetection | None:
         primary_label = selected_labels[0]
         y_values, x_values = np.where(labels == primary_label)
         mark_type: Literal["line", "multiple"] = "multiple" if len(selected_labels) >= 2 else "line"
+        path_shape, bend_count = _colored_path_geometry(x_values, y_values) if mark_type == "line" else (None, 0)
         return _ColoredPathDetection(
             np.column_stack((x_values, y_values)).astype(np.float32),
             mark_type,
             len(selected_labels),
+            path_shape,
+            bend_count,
         )
 
     # Scatter plots often contain several disconnected colored point markers.
@@ -116,6 +127,28 @@ def _colored_path_detection(rgb: np.ndarray) -> _ColoredPathDetection | None:
                 1,
             )
     return None
+
+
+def _colored_path_geometry(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+) -> tuple[Literal["straight_segments", "smooth_curve"] | None, int]:
+    """Distinguish a connected polyline from a continuously bending curve."""
+    if len(x_values) < 12 or np.ptp(x_values) < 16:
+        return None, 0
+    ordered: list[tuple[float, float]] = []
+    for x_value in sorted(np.unique(x_values)):
+        selected = y_values[x_values == x_value]
+        if selected.size:
+            ordered.append((float(x_value), float(np.median(selected))))
+    if len(ordered) < 8:
+        return None, 0
+    profile = np.asarray(ordered, dtype=np.float32).reshape(-1, 1, 2)
+    diagonal = math.hypot(float(np.ptp(x_values)), float(np.ptp(y_values)))
+    vertices = cv2.approxPolyDP(profile, max(1.2, diagonal * 0.008), False)
+    if len(vertices) <= 5:
+        return "straight_segments", max(0, len(vertices) - 2)
+    return "smooth_curve", 0
 
 
 def _largest_non_axis_path(gray: np.ndarray) -> np.ndarray | None:
@@ -189,10 +222,11 @@ def _curve_features(
     Literal["monotonic", "turning", "oscillating"] | None,
     int,
     Literal["increasing", "decreasing", "horizontal"] | None,
+    tuple[Literal["increasing", "decreasing", "horizontal"], ...],
 ]:
     x_values, y_values = points[:, 0], points[:, 1]
     if np.ptp(x_values) < 12:
-        return None, None, 0, None
+        return None, None, 0, None, ()
 
     bin_count = max(8, min(36, int(np.ptp(x_values) / 5)))
     edges = np.linspace(float(x_values.min()), float(x_values.max()), bin_count + 1)
@@ -209,7 +243,7 @@ def _curve_features(
     if len(profile_x) < 3:
         slope = float(np.polyfit(x_values, y_values, 1)[0])
         trend = _trend_from_image_slope(slope)
-        return trend, "monotonic", 0, trend
+        return trend, "monotonic", 0, trend, (trend,) if trend else ()
 
     px = np.asarray(profile_x)
     py = np.asarray(profile_y)
@@ -245,7 +279,12 @@ def _curve_features(
     trend = "horizontal" if abs(fitted_change) < max(3.0, amplitude * 0.18) else _trend_from_image_slope(slope)
 
     initial = _trend_from_image_slope(float(runs[0])) if runs else trend
-    return trend, variation, changes, initial
+    direction_sequence = tuple(
+        direction
+        for sign in runs
+        if (direction := _trend_from_image_slope(float(sign))) is not None
+    )
+    return trend, variation, changes, initial, direction_sequence
 
 
 def _trend_from_image_slope(

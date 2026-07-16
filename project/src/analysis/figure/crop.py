@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -29,13 +30,21 @@ def crop_and_save_figure_block(
     block: Mapping[str, Any],
     page_id: int | None,
     output_dir: str | Path | None = None,
+    *,
+    pdf_path: str | Path | None = None,
+    source_dpi: int | None = None,
+    caption_dpi: int = 180,
 ) -> Optional[str]:
     """Save a deterministic crop for one figure block and return its path."""
     bbox = block.get("bbox")
     if not page_image_path or not isinstance(bbox, (list, tuple)):
         return None
 
-    crop = crop_figure_image(page_image_path, bbox)
+    crop = _render_high_resolution_figure(
+        pdf_path, page_id, bbox, source_dpi, caption_dpi
+    )
+    if crop is None:
+        crop = crop_figure_image(page_image_path, bbox)
     if crop is None:
         return None
 
@@ -46,3 +55,42 @@ def crop_and_save_figure_block(
     destination = destination_dir / f"p{page_label}_{block_label}.png"
     crop.save(destination, format="PNG")
     return str(destination)
+
+
+def _render_high_resolution_figure(
+    pdf_path: str | Path | None,
+    page_number: int | None,
+    bbox: Sequence[float],
+    source_dpi: int | None,
+    caption_dpi: int,
+) -> Optional[Image.Image]:
+    """Render only the detected Figure region at captioning resolution.
+
+    Layout coordinates remain tied to the original page DPI.  Re-rendering a
+    small clip avoids increasing DocLayout/OCR cost for the whole page while
+    preserving labels and point markers for the vision-language model.
+    """
+    if (
+        not pdf_path
+        or page_number is None
+        or not isinstance(source_dpi, int)
+        or source_dpi <= 0
+        or caption_dpi <= source_dpi
+        or len(bbox) != 4
+    ):
+        return None
+    try:
+        import fitz
+
+        scale_to_points = 72.0 / source_dpi
+        clip = fitz.Rect(*(float(value) * scale_to_points for value in bbox))
+        with fitz.open(pdf_path) as document:
+            page = document[int(page_number) - 1]
+            clip &= page.rect
+            if clip.is_empty or clip.is_infinite:
+                return None
+            matrix = fitz.Matrix(caption_dpi / 72.0, caption_dpi / 72.0)
+            pixmap = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
+            return Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB")
+    except (FileNotFoundError, OSError, TypeError, ValueError, IndexError, RuntimeError):
+        return None

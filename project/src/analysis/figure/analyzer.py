@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from .classifier import metadata_figure_type
+from .context import build_figure_context
 from .crop import crop_and_save_figure_block
 from .engine import FigureUnderstandingEngine, run_figure_engine
 from .normalize import build_figure_analysis
@@ -15,6 +16,9 @@ def analyze_figure_blocks(
     engine: FigureUnderstandingEngine | None = None,
     output_dir: str | Path | None = None,
     ocr_lines: Sequence[Mapping[str, Any]] | None = None,
+    semantic_analyses: Sequence[Mapping[str, Any]] | None = None,
+    pdf_path: str | Path | None = None,
+    source_dpi: int | None = None,
 ) -> list[dict[str, Any]]:
     """Analyze every figure block using the same interface as other modules."""
     page_id = page.get("page_id")
@@ -23,7 +27,10 @@ def analyze_figure_blocks(
         return []
 
     return [
-        analyze_figure_block(page_id, block, blocks, index, page_image_path, engine, output_dir, ocr_lines)
+        analyze_figure_block(
+            page_id, block, blocks, index, page_image_path, engine, output_dir, ocr_lines,
+            semantic_analyses, pdf_path, source_dpi
+        )
         for index, block in enumerate(blocks)
         if isinstance(block, Mapping) and block.get("type") == "figure"
     ]
@@ -38,12 +45,23 @@ def analyze_figure_block(
     engine: FigureUnderstandingEngine | None = None,
     output_dir: str | Path | None = None,
     ocr_lines: Sequence[Mapping[str, Any]] | None = None,
+    semantic_analyses: Sequence[Mapping[str, Any]] | None = None,
+    pdf_path: str | Path | None = None,
+    source_dpi: int | None = None,
 ) -> dict[str, Any]:
     bbox = block.get("bbox")
-    crop_path = crop_and_save_figure_block(page_image_path, block, page_id, output_dir)
+    crop_path = crop_and_save_figure_block(
+        page_image_path,
+        block,
+        page_id,
+        output_dir,
+        pdf_path=pdf_path,
+        source_dpi=source_dpi,
+    )
     previous_id = _neighbor_id(blocks, block_index - 1)
     next_id = _neighbor_id(blocks, block_index + 1)
     caption_id = _adjacent_caption_id(blocks, block_index)
+    selected_context = build_figure_context(blocks, block_index, semantic_analyses)
 
     if crop_path is None:
         normalized = {
@@ -57,7 +75,7 @@ def analyze_figure_block(
         }
     else:
         evidence = _figure_text_evidence(ocr_lines, bbox)
-        raw = run_figure_engine(engine, crop_path, evidence=evidence)
+        raw = run_figure_engine(engine, crop_path, evidence=evidence, context=selected_context)
         if engine is None:
             explicit_type = metadata_figure_type(block)
             if explicit_type != "unknown":
@@ -65,7 +83,16 @@ def analyze_figure_block(
                 raw["warnings"] = []
         normalized = build_figure_analysis(raw)
 
-    nearby_ids = list(dict.fromkeys(item for item in [previous_id, next_id, caption_id] if item is not None))
+    nearby_ids = list(dict.fromkeys(
+        item
+        for item in [
+            previous_id,
+            next_id,
+            caption_id,
+            *(context_item["block_id"] for context_item in selected_context),
+        ]
+        if item is not None
+    ))
     record = {
         "schema_version": "1.0.0",
         "page_id": page_id,
@@ -113,12 +140,12 @@ def _safe_confidence(value: Any) -> float | None:
 def _figure_text_evidence(
     ocr_lines: Sequence[Mapping[str, Any]] | None,
     figure_bbox: Any,
-) -> list[str]:
+) -> list[dict[str, Any]]:
     """Collect reasonably reliable text whose center lies inside a figure."""
     if not ocr_lines or not isinstance(figure_bbox, (list, tuple)) or len(figure_bbox) != 4:
         return []
     x1, y1, x2, y2 = figure_bbox
-    evidence: list[str] = []
+    evidence: list[dict[str, Any]] = []
     for line in ocr_lines:
         bbox = line.get("bbox")
         text = str(line.get("text") or "").strip()
@@ -130,6 +157,20 @@ def _figure_text_evidence(
             continue
         lx1, ly1, lx2, ly2 = bbox
         center_x, center_y = (lx1 + lx2) / 2, (ly1 + ly2) / 2
-        if x1 <= center_x <= x2 and y1 <= center_y <= y2 and text not in evidence:
-            evidence.append(text)
+        if x1 <= center_x <= x2 and y1 <= center_y <= y2:
+            if any(item["text"] == text and item["bbox"] == bbox for item in evidence):
+                continue
+            evidence.append({
+                "id": f"t{len(evidence) + 1}",
+                "text": text,
+                "bbox": [lx1 - x1, ly1 - y1, lx2 - x1, ly2 - y1],
+                "relative_bbox": [
+                    (lx1 - x1) / max(1, x2 - x1),
+                    (ly1 - y1) / max(1, y2 - y1),
+                    (lx2 - x1) / max(1, x2 - x1),
+                    (ly2 - y1) / max(1, y2 - y1),
+                ],
+                "score": float(score) if isinstance(score, (int, float)) and not isinstance(score, bool) else None,
+                "source": str(line.get("source") or "ocr"),
+            })
     return evidence

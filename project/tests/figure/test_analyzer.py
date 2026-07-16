@@ -57,13 +57,30 @@ class EvidenceAwareEngine(FakeChartEngine):
         return super().analyze(image_path)
 
 
+class ContextAwareEngine(FakeChartEngine):
+    def analyze(self, image_path, evidence=None, context=None):
+        self.context = context
+        output = super().analyze(image_path)
+        output.update({
+            "description_text": "주변 설명을 바탕으로 함수의 변화를 나타낸 그래프다.",
+            "description_model": {"name": "context-captioner", "version": "test"},
+            "description_confidence": 0.8,
+            "generation_time_seconds": 0.1,
+            "context_used": bool(context),
+        })
+        return output
+
+
 class FigureAnalyzerTests(unittest.TestCase):
     def setUp(self):
         self.validator = Draft202012Validator(SCHEMA)
         self.page = {
             "page_id": 5,
             "blocks": [
-                {"block_id": "p5_b1", "type": "paragraph", "bbox": [0, 0, 90, 10]},
+                {
+                    "block_id": "p5_b1", "type": "paragraph", "bbox": [0, 0, 90, 10],
+                    "text": "함수 y=a/x의 그래프를 살펴보자.",
+                },
                 {
                     "block_id": "p5_b2",
                     "type": "figure",
@@ -71,7 +88,10 @@ class FigureAnalyzerTests(unittest.TestCase):
                     "score": 0.91,
                     "detector": "doclayout_yolo",
                 },
-                {"block_id": "p5_b3", "type": "caption", "bbox": [10, 72, 90, 78]},
+                {
+                    "block_id": "p5_b3", "type": "caption", "bbox": [10, 72, 90, 78],
+                    "text": "반비례 관계를 나타낸 그래프",
+                },
             ],
         }
 
@@ -125,7 +145,13 @@ class FigureAnalyzerTests(unittest.TestCase):
                 ocr_lines=ocr_lines,
             )
 
-        self.assertEqual(engine.evidence, ["y=ax", "(1, a)"])
+        self.assertEqual([item["text"] for item in engine.evidence], ["y=ax", "(1, a)"])
+        self.assertEqual(engine.evidence[0]["id"], "t1")
+        self.assertEqual(engine.evidence[0]["bbox"], [10, 10, 30, 20])
+        self.assertEqual(
+            engine.evidence[0]["relative_bbox"],
+            [0.125, 1 / 6, 0.375, 1 / 3],
+        )
 
     def test_engine_failure_is_isolated_to_the_block(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,6 +160,16 @@ class FigureAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["analysis"]["status"], "failed")
         self.assertIsNone(result["analysis"]["result"])
         self.assertIn("test failure", " ".join(result["warnings"]))
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_nearby_textbook_context_is_forwarded_and_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = ContextAwareEngine()
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertEqual([item["block_id"] for item in engine.context], ["p5_b3", "p5_b1"])
+        self.assertTrue(result["description"]["context_used"])
+        self.assertIn("p5_b1", result["context"]["nearby_block_ids"])
         self.assertEqual(list(self.validator.iter_errors(result)), [])
 
     def test_missing_page_image_returns_failed_schema_record(self):

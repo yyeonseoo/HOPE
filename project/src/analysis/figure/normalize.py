@@ -131,6 +131,6 @@ def _normalize_generated_description(raw: Mapping[str, Any]) -> dict[str, Any] |
         "short_text": text,
         "long_text": text,
         "transcription_notes": None,
-        "context_used": False,
+        "context_used": raw.get("context_used") is True,
         "review_status": "unreviewed" if text else "needs_review",
     }
