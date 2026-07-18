@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
 
 from src.analysis.formula.formula_analyzer import (
     analyze_formula_blocks,
