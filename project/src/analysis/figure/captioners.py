@@ -1681,6 +1681,13 @@ def _substitute_stray_hanja(text: str) -> str:
     return hanja.translate(text, "substitution")
 
 
+def _collapse_decimal_point_spacing(text: str) -> str:
+    """Remove the stray space generation sometimes inserts after a decimal
+    point (e.g. '0. 6' -> '0.6'), a detokenization artifact rather than two
+    separate numbers."""
+    return re.sub(r"(?<=\d)\.\s+(?=\d)", ".", text)
+
+
 def _postprocess_qwen_caption(text: str) -> str:
     """Remove obvious generation artifacts without rewriting valid OCR or math."""
     text = _substitute_stray_hanja(text)
@@ -1711,7 +1718,7 @@ def _postprocess_qwen_caption(text: str) -> str:
         duplicate_run = 0
         seen.add(key)
         kept.append(sentence)
-    return " ".join(kept).strip()
+    return _collapse_decimal_point_spacing(" ".join(kept).strip())
 
 
 def _find_invalid_month_mentions(text: str) -> list[str]:
