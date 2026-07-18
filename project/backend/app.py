@@ -187,6 +187,10 @@ async def analyze_page(
                     result["page"],
                     result["page_image_path"],
                     figure_engine,
+                    ocr_lines=result.get("ocr_lines"),
+                    semantic_analyses=semantic_analyses,
+                    pdf_path=pdf_path,
+                    source_dpi=dpi,
                 )
             semantic_analyses.extend(figure_analyses)
 

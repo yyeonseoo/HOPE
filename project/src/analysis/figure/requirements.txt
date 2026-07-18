@@ -5,3 +5,8 @@ open-clip-torch>=2.30.0
 huggingface-hub>=0.26.0,<2.0.0
 safetensors>=0.4.5
 sentencepiece>=0.2.0
+hanja==0.15.1
+# hanja pins pyyaml==6.0.1, but paddlex (used elsewhere in this project) needs
+# pyyaml==6.0.2 and hanja's translate() doesn't actually touch yaml at
+# runtime -- keep this pin so a fresh install doesn't silently downgrade it.
+pyyaml==6.0.2

@@ -297,6 +297,9 @@ class TestFormulaAnalyzer(unittest.TestCase):
             ("⑴ y=4x\n⑵ y=- 2\nx", r"y=4x;y=-\frac{2}{x}"),
             ("(1) y=4x\n(2) y=- 2\nx", r"y=4x;y=-\frac{2}{x}"),
             ("⑴ y=4x ⑵ y=-2/x", r"y=4x;y=-\frac{2}{x}"),
+            ("60÷20=3(번)", "60/20=3(번)"),
+            ("60/20=3(번)", "60/20=3(번)"),
+            ("3+4=7", "3+4=7"),
         ]
 
         for input_text, expected_latex in cases:
@@ -366,6 +369,22 @@ class TestFormulaAnalyzer(unittest.TestCase):
         self.assertEqual(negative_fraction_result["status"], "generated")
         self.assertIn("반비례", negative_fraction_result["short_text"])
         self.assertIn("-8", negative_fraction_result["short_text"])
+
+        division_result = generate_formula_description("60/20=3(번)")
+
+        self.assertEqual(division_result["status"], "generated")
+        self.assertIn("나누면", division_result["short_text"])
+        self.assertIn("번", division_result["short_text"])
+
+        inequality_result = generate_formula_description("a>0")
+
+        self.assertEqual(inequality_result["status"], "generated")
+        self.assertIn("보다 큽니다", inequality_result["short_text"])
+
+        equation_result = generate_formula_description("3+4=7")
+
+        self.assertEqual(equation_result["status"], "generated")
+        self.assertIn("7", equation_result["short_text"])
 
     def test_rejects_unreliable_pix2tex_output(self):
         bad_latex = (
