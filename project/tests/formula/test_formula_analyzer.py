@@ -410,5 +410,29 @@ class TestFormulaAnalyzer(unittest.TestCase):
             any("fewer formula parts" in warning for warning in result["warnings"])
         )
 
+    @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
+    def test_warning_when_pix2tex_output_is_rejected(self, mock_pix2tex):
+        mock_pix2tex.return_value = r"\stackrel{\operatorname{noise}}{\Phi}"
+
+        result = recognize_formula_from_crop("fake_crop.png", "y=4x")
+
+        self.assertEqual(result["latex"], "y=4x")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertTrue(
+            any("rejected as unreliable" in warning for warning in result["warnings"])
+        )
+    
+    @patch("src.analysis.formula.formula_recognizer.recognize_with_optional_pix2tex")
+    def test_warning_when_pix2tex_is_unavailable_with_crop(self, mock_pix2tex):
+        mock_pix2tex.return_value = None
+
+        result = recognize_formula_from_crop("fake_crop.png", "y=4x")
+
+        self.assertEqual(result["latex"], "y=4x")
+        self.assertEqual(result["model"]["name"], "formula-recognizer-fallback")
+        self.assertTrue(
+            any("unavailable or failed" in warning for warning in result["warnings"])
+        )
+
 if __name__ == "__main__":
     unittest.main()
