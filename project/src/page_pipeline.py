@@ -52,6 +52,9 @@ def process_single_page(
         "page": page_result,
         "page_image_path": page_image_path,
         "visualization_path": visualization_path,
+        # Internal grounding evidence for downstream figure captioning.
+        # This is intentionally kept outside the exported page schema.
+        "ocr_lines": ocr_lines,
         "ocr_source": ocr_source,
         "layout_mode": "model_only" if model_only else (correction_profile or "enhanced"),
     }
