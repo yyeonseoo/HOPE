@@ -28,7 +28,22 @@ from src.analysis.figure.captioners import (
     _anchor_trusted_axis_labels,
     _visible_panel_count,
     _substitute_stray_hanja,
+    _PAGE_DESCRIPTION_PROMPT,
+    Qwen3VLCaptioner,
 )
+
+
+class PageDescriptionPromptTests(unittest.TestCase):
+    def test_forbids_inventing_facts_not_in_the_draft(self):
+        self.assertIn("페이지 내용에 없는 객체·숫자·수식·값·이름", _PAGE_DESCRIPTION_PROMPT)
+        self.assertIn("페이지 내용에 있는 사실은 하나도 빠뜨리지", _PAGE_DESCRIPTION_PROMPT)
+
+    def test_allows_sentence_reconstruction(self):
+        self.assertIn("문장을 자유롭게 재구성", _PAGE_DESCRIPTION_PROMPT)
+
+    def test_captioner_exposes_generate_page_description(self):
+        self.assertTrue(hasattr(Qwen3VLCaptioner, "generate_page_description"))
+        self.assertTrue(callable(Qwen3VLCaptioner.generate_page_description))
 
 
 class ComplexGraphPromptTests(unittest.TestCase):

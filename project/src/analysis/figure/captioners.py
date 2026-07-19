@@ -274,6 +274,19 @@ QWEN_GRAPH_DESCRIPTION_PROMPT = (
 )
 
 
+_PAGE_DESCRIPTION_PROMPT = (
+    "아래 '페이지 내용'은 이 교과서 페이지에서 실제로 확인된 내용을 읽기 순서대로 정리한 것입니다. "
+    "이 내용만을 근거로 삼아, 시각장애인 사용자가 페이지 전체를 이해할 수 있도록 자연스럽게 이어지는 하나의 서술로 다시 작성하세요. "
+    "문장을 자유롭게 재구성·연결하고 중복된 표현은 정리해도 되지만, 내용의 순서와 흐름은 유지하세요. "
+    "등장하는 인물·대상의 이름과 용어는 페이지 내용에 적힌 표기 그대로, 처음부터 끝까지 똑같이 사용하세요. "
+    "페이지 내용에 없는 객체·숫자·수식·값·이름이나 새로운 해설·일반화·추론은 절대 만들지 마세요. "
+    "페이지 내용에 있는 사실은 하나도 빠뜨리지 마세요. "
+    "'참고', '결론', '요약' 같은 별도 단락이나 구분선을 추가하지 말고, 원문에 없던 마무리 문장도 덧붙이지 마세요. "
+    "Markdown, 제목, 번호 목록 없이 자연스러운 한국어 문단으로만, 원문 분량을 크게 넘기지 않게 작성하고, 완성된 설명만 출력하세요.\n\n"
+    "페이지 내용:\n"
+)
+
+
 class Qwen3VLCaptioner:
     """Instruction captioner for Korean textbook figures."""
 
@@ -540,6 +553,63 @@ class Qwen3VLCaptioner:
             model_version=base.model_version,
             warnings=[*base.warnings, *grounding_warnings],
             context_block_ids=tuple(parsed["relevant_context_ids"]),
+        )
+
+    def generate_page_description(self, draft_text: str) -> CaptionOutput:
+        """Rewrite a reading-order block-text draft into one natural narrative.
+
+        `draft_text` is the only source of facts -- the prompt forbids adding
+        anything not already in it, and callers are expected to verify the
+        result against it afterward (see page_description.py).
+        """
+        torch = _import_torch()
+        self._load(torch)
+        started = time.perf_counter()
+        prompt = _PAGE_DESCRIPTION_PROMPT + draft_text
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        inputs = self._processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        prompt_length = inputs["input_ids"].shape[1]
+        inputs = {
+            name: value.to(self._device, self._dtype) if value.is_floating_point() else value.to(self._device)
+            for name, value in inputs.items()
+        }
+        # Capped noticeably tighter than draft length: a 1.15x cap still let the
+        # model ramble well past 1.8x the draft's character count (Korean tokens
+        # often cover more than one character), so this forces an earlier stop
+        # even at the cost of occasionally truncating the last sentence -- the
+        # postprocessing step already drops an incomplete trailing sentence.
+        max_new_tokens = min(500, max(120, int(len(draft_text) * 0.85)))
+        with torch.inference_mode():
+            generated = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                repetition_penalty=1.05,
+                no_repeat_ngram_size=4,
+                do_sample=False,
+                **_generation_special_token_ids(self._processor, self._model),
+                return_dict_in_generate=True,
+                output_scores=True,
+            )
+        elapsed = time.perf_counter() - started
+        raw = self._processor.batch_decode(
+            generated.sequences[:, prompt_length:],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0].strip()
+        text = _postprocess_qwen_caption(raw)
+        return CaptionOutput(
+            text=text,
+            confidence=_sequence_confidence(self._model, generated),
+            generation_time_seconds=elapsed,
+            model_name=f"{self.model_name}-page-description",
+            model_version=self.model_version,
+            warnings=[] if text else ["Qwen3-VL returned an empty page description."],
         )
 
     def _caption_structured_graph(

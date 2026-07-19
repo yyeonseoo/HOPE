@@ -24,6 +24,7 @@ from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
 from analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
 from analysis.table import analyze_table_blocks
+from page_description import build_page_description
 
 app = FastAPI(title="Textbook Layout Parser API")
 
@@ -194,10 +195,20 @@ async def analyze_page(
                 )
             semantic_analyses.extend(figure_analyses)
 
+        # Deterministic reading-order text only -- no model. The optional
+        # Qwen-based rewrite (`generate_page_description`) exists and is
+        # tested, but isn't wired in here yet: on real pages it produced
+        # garbled vocabulary (not just fabricated numbers/equations, which
+        # build_page_description's grounding check catches) that slipped
+        # through as a "clean" result, so it isn't reliable enough to expose
+        # through this endpoint on the current 2B/CPU setup.
+        page_description_result = build_page_description(result["page"], semantic_analyses)
+
         return {
             "page_count": page_count,
             "page": result["page"],
             "semantic_analyses": semantic_analyses,
+            "page_description": page_description_result,
             "page_image": _image_data_url(result["page_image_path"]),
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],
