@@ -73,14 +73,32 @@ def _resolve_block_text(
     return None, f"{block_type} block {block_id!r} has no usable description or text; omitted from page description."
 
 
-def _ensure_sentence_boundary(text: str) -> str:
-    return text if re.search(r"[.!?。！？]$", text) else text + "."
+def _collapse_whitespace(text: str) -> str:
+    """Join OCR line-wraps within a block into flowing text.
+
+    A paragraph block's text is built by stacking separately-detected OCR
+    lines (see ocr.py's lines_text_inside_bbox), so it often contains
+    mid-word/mid-sentence newlines that have nothing to do with real
+    sentence breaks. Collapsing them to spaces is pure formatting -- no
+    words are added, removed, or reordered.
+    """
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _build_draft(
     page_result: Mapping[str, Any], semantic_analyses: Sequence[Mapping[str, Any]]
 ) -> tuple[str, list[str], list[str]]:
-    """Return (draft_text, block_ids, warnings), reading_order-sorted."""
+    """Return (draft_text, block_ids, warnings), reading_order-sorted.
+
+    Blocks are joined with a single space and never given a forced trailing
+    period: the layout detector sometimes splits one OCR sentence across two
+    blocks (e.g. "...내용을" / "좌표평면 위에..."), and stamping a period on
+    the first half would turn a mid-sentence break into a fake one. Letting
+    it run straight into the next block reproduces the original sentence
+    when that's what it was, and costs nothing when it wasn't -- blocks with
+    their own generated description (formula/table/figure) already end in
+    proper punctuation from that analyzer.
+    """
     analyses_by_id = {
         str(item.get("block_id")): item for item in semantic_analyses if item.get("block_id") is not None
     }
@@ -95,7 +113,10 @@ def _build_draft(
             if skip_reason:
                 warnings.append(skip_reason)
             continue
-        sentences.append(_ensure_sentence_boundary(text))
+        text = _collapse_whitespace(text)
+        if not text:
+            continue
+        sentences.append(text)
         block_id = block.get("block_id")
         if block_id is not None:
             block_ids.append(str(block_id))

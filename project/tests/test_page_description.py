@@ -116,6 +116,44 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         self.assertIsNone(result["text"])
         self.assertIsNone(result["draft_text"])
 
+    def test_ocr_line_wraps_are_collapsed_to_flowing_text(self):
+        page_result = {
+            "page_id": 9,
+            "blocks": [
+                {
+                    "block_id": "p9_b1",
+                    "type": "paragraph",
+                    "text": "이해하\n여 빠르고 쉽게\n활용하는 것이 중요하다.",
+                    "reading_order": 0,
+                },
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(result["draft_text"], "이해하 여 빠르고 쉽게 활용하는 것이 중요하다.")
+
+    def test_block_without_trailing_punctuation_flows_into_next_block(self):
+        page_result = {
+            "page_id": 10,
+            "blocks": [
+                {"block_id": "p10_b1", "type": "paragraph", "text": "이럴 때 정보의 내용을", "reading_order": 0},
+                {
+                    "block_id": "p10_b2",
+                    "type": "paragraph",
+                    "text": "좌표평면 위에 그림으로 나타내어 해석하면 편리하다.",
+                    "reading_order": 1,
+                },
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(
+            result["draft_text"],
+            "이럴 때 정보의 내용을 좌표평면 위에 그림으로 나타내어 해석하면 편리하다.",
+        )
+
 
 class BuildPageDescriptionGeneratorTests(unittest.TestCase):
     def test_no_generator_returns_draft_only(self):
