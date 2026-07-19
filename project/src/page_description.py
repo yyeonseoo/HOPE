@@ -15,6 +15,8 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 _TEXT_ONLY_TYPES = {"title", "section_title", "paragraph", "caption", "footer", "page_number"}
 _ANALYZED_TYPES = {"formula", "table", "figure"}
 _RAW_TEXT_FALLBACK_TYPES = {"formula", "table"}
+_SECTION_LABEL_TYPES = {"footer", "page_number"}
+_LEADING_NUMBER_PATTERN = re.compile(r"^[\s\d]+")
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r".+?(?:[.!?。！？]+|$)", re.DOTALL)
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9가-힣])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9])")
@@ -85,29 +87,43 @@ def _collapse_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _extract_section_label(text: str) -> str | None:
+    """Strip a leading page number from footer/page_number text, keeping only
+    a real running header if one remains.
+
+    A textbook footer is usually just "118 Ⅲ. 좌표평면과 그래프" -- the page
+    number carries no content, but the chapter label after it identifies
+    where the page sits. If nothing but the number is there, return None so
+    the caller can drop the block entirely instead of surfacing noise.
+    """
+    stripped = _LEADING_NUMBER_PATTERN.sub("", text).strip()
+    return stripped or None
+
+
 def _build_draft(
     page_result: Mapping[str, Any], semantic_analyses: Sequence[Mapping[str, Any]]
 ) -> tuple[str, list[str], list[str]]:
     """Return (draft_text, block_ids, warnings), reading_order-sorted.
 
-    Blocks are joined with a single space and never given a forced trailing
-    period: the layout detector sometimes splits one OCR sentence across two
-    blocks (e.g. "...내용을" / "좌표평면 위에..."), and stamping a period on
-    the first half would turn a mid-sentence break into a fake one. Letting
-    it run straight into the next block reproduces the original sentence
-    when that's what it was, and costs nothing when it wasn't -- blocks with
-    their own generated description (formula/table/figure) already end in
-    proper punctuation from that analyzer.
+    Each contributing block is rendered as its own "[type] text" line, in
+    reading order, so the source of every sentence is explicit rather than
+    blended into anonymous prose. footer/page_number blocks are handled
+    separately: a bare page number is dropped as noise, but a chapter label
+    surviving after the number is stripped is surfaced once as a page-level
+    header instead of an inline "[footer]" line.
     """
     analyses_by_id = {
         str(item.get("block_id")): item for item in semantic_analyses if item.get("block_id") is not None
     }
     blocks = sorted(page_result.get("blocks", []), key=lambda b: b.get("reading_order", 0))
 
-    sentences: list[str] = []
+    section_labels: list[str] = []
+    seen_labels: set[str] = set()
+    lines: list[str] = []
     block_ids: list[str] = []
     warnings: list[str] = []
     for block in blocks:
+        block_type = block.get("type")
         text, skip_reason = _resolve_block_text(block, analyses_by_id)
         if not text:
             if skip_reason:
@@ -116,12 +132,26 @@ def _build_draft(
         text = _collapse_whitespace(text)
         if not text:
             continue
-        sentences.append(text)
+
         block_id = block.get("block_id")
+
+        if block_type in _SECTION_LABEL_TYPES:
+            label = _extract_section_label(text)
+            if label and label not in seen_labels:
+                seen_labels.add(label)
+                section_labels.append(label)
+                if block_id is not None:
+                    block_ids.append(str(block_id))
+            continue
+
+        lines.append(f"[{block_type}] {text}")
         if block_id is not None:
             block_ids.append(str(block_id))
 
-    return " ".join(sentences).strip(), block_ids, warnings
+    header = "\n".join(section_labels)
+    body = "\n".join(lines)
+    draft = "\n\n".join(part for part in (header, body) if part).strip()
+    return draft, block_ids, warnings
 
 
 def _split_sentences(text: str) -> list[str]:

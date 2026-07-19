@@ -71,23 +71,62 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         result = build_page_description(page_result, semantic_analyses)
 
         self.assertEqual(result["status"], "success")
+        # p1_b7's footer text is "12" -- a bare page number with no label left
+        # after stripping the number, so it's dropped rather than surfaced.
         self.assertEqual(
-            result["block_ids"], ["p1_b1", "p1_b2", "p1_b3", "p1_b4", "p1_b5", "p1_b6", "p1_b7"]
+            result["block_ids"], ["p1_b1", "p1_b2", "p1_b3", "p1_b4", "p1_b5", "p1_b6"]
         )
         expected_order = [
-            "1단원 좌표평면",
-            "이 단원에서는 좌표평면을 배운다.",
-            "이 식은 y가 x의 2배임을 나타낸다.",
-            "표는 학년별 학생 수를 보여준다.",
-            "그래프는 원점에서 시작해 증가한다.",
-            "그림 1",
-            "12",
+            "[title] 1단원 좌표평면",
+            "[paragraph] 이 단원에서는 좌표평면을 배운다.",
+            "[formula] 이 식은 y가 x의 2배임을 나타낸다.",
+            "[table] 표는 학년별 학생 수를 보여준다.",
+            "[figure] 그래프는 원점에서 시작해 증가한다.",
+            "[caption] 그림 1",
         ]
         for fragment in expected_order:
             self.assertIn(fragment, result["draft_text"])
         # order preserved
         positions = [result["draft_text"].index(fragment) for fragment in expected_order]
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("12", result["draft_text"])
+
+    def test_bare_page_number_footer_is_excluded(self):
+        page_result = {
+            "page_id": 20,
+            "blocks": [
+                {"block_id": "p20_b1", "type": "paragraph", "text": "본문 내용이다.", "reading_order": 0},
+                {"block_id": "p20_b2", "type": "footer", "text": "118", "reading_order": 1},
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(result["draft_text"], "[paragraph] 본문 내용이다.")
+        self.assertNotIn("p20_b2", result["block_ids"])
+
+    def test_footer_with_chapter_label_becomes_page_header(self):
+        page_result = {
+            "page_id": 21,
+            "blocks": [
+                {"block_id": "p21_b1", "type": "paragraph", "text": "본문 내용이다.", "reading_order": 0},
+                {
+                    "block_id": "p21_b2",
+                    "type": "footer",
+                    "text": "118 Ⅲ. 좌표평면과 그래프",
+                    "reading_order": 1,
+                },
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(
+            result["draft_text"],
+            "Ⅲ. 좌표평면과 그래프\n\n[paragraph] 본문 내용이다.",
+        )
+        self.assertIn("p21_b2", result["block_ids"])
+        self.assertNotIn("[footer]", result["draft_text"])
 
     def test_formula_falls_back_to_raw_text_when_description_missing(self):
         page_result, semantic_analyses = _mixed_page()
@@ -131,9 +170,9 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
 
         result = build_page_description(page_result, [])
 
-        self.assertEqual(result["draft_text"], "이해하 여 빠르고 쉽게 활용하는 것이 중요하다.")
+        self.assertEqual(result["draft_text"], "[paragraph] 이해하 여 빠르고 쉽게 활용하는 것이 중요하다.")
 
-    def test_block_without_trailing_punctuation_flows_into_next_block(self):
+    def test_each_block_appears_as_its_own_tagged_line_in_reading_order(self):
         page_result = {
             "page_id": 10,
             "blocks": [
@@ -151,7 +190,7 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
 
         self.assertEqual(
             result["draft_text"],
-            "이럴 때 정보의 내용을 좌표평면 위에 그림으로 나타내어 해석하면 편리하다.",
+            "[paragraph] 이럴 때 정보의 내용을\n[paragraph] 좌표평면 위에 그림으로 나타내어 해석하면 편리하다.",
         )
 
 

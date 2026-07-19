@@ -145,6 +145,31 @@ function DescriptionResult({ description, captioningEnabled }) {
   );
 }
 
+function PageDescriptionView({ result }) {
+  const description = result.page_description;
+  if (!description || description.status === "failed") {
+    return <div className="empty-state result-empty">이 페이지에서 읽을 수 있는 내용을 찾지 못했습니다.</div>;
+  }
+
+  return (
+    <div className="layout-view">
+      <div className="pane-header">
+        <h2>페이지 전체 설명</h2>
+        <span>{description.was_generated ? "모델 다듬기 적용" : "블록 원문 이어붙임"}</span>
+      </div>
+      <div className="description-output">
+        <p className="page-description-text">{description.text || "없음"}</p>
+        <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
+        {description.warnings?.length > 0 && (
+          <ul className="mt-2 list-disc pl-5 text-sm text-amber-900">
+            {description.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function formatFormulaWarning(warning) {
   if (!warning) {
     return "";
@@ -297,7 +322,7 @@ export default function App() {
 
   function downloadJson() {
     if (!result) return;
-    const payload = { ...result.page, semantic_analyses: result.semantic_analyses || [] };
+    const payload = { ...result.page, semantic_analyses: result.semantic_analyses || [], page_description: result.page_description || null };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
     anchor.href = url; anchor.download = `page_${String(result.page.page_id).padStart(4, "0")}_analysis.json`;
@@ -305,7 +330,7 @@ export default function App() {
   }
 
   const busy = status === "counting" || status === "analyzing";
-  const tabs = [{ id: "layout", label: "Layout" }, { id: "formula", label: "Formula" }, { id: "table", label: "Table" }, { id: "figure", label: "Figure" }, { id: "json", label: "JSON" }];
+  const tabs = [{ id: "layout", label: "Layout" }, { id: "page", label: "Page" }, { id: "formula", label: "Formula" }, { id: "table", label: "Table" }, { id: "figure", label: "Figure" }, { id: "json", label: "JSON" }];
 
   return (
     <main className="app-shell">
@@ -332,8 +357,8 @@ export default function App() {
           <nav className="view-tabs" aria-label="결과 보기">{tabs.map((tab) => <button key={tab.id} className={activeView === tab.id ? "active" : ""} onClick={() => setActiveView(tab.id)}>{tab.label}</button>)}</nav>
           {!result ? <div className="empty-state result-empty">분석할 PDF와 페이지를 선택하세요.</div> : activeView === "layout" ? (
             <div className="layout-view"><div className="pane-header"><h2>레이아웃 시각화</h2><span>{result.page.page_id}페이지</span></div><img src={result.visualization_image} alt="레이아웃 분석 시각화" /></div>
-          ) : REVIEW_TYPES.includes(activeView) ? <AnalysisInspector result={result} type={activeView} /> : (
-            <div className="json-view"><pre>{JSON.stringify({ ...result.page, semantic_analyses: result.semantic_analyses || [] }, null, 2)}</pre></div>
+          ) : activeView === "page" ? <PageDescriptionView result={result} /> : REVIEW_TYPES.includes(activeView) ? <AnalysisInspector result={result} type={activeView} /> : (
+            <div className="json-view"><pre>{JSON.stringify({ ...result.page, semantic_analyses: result.semantic_analyses || [], page_description: result.page_description || null }, null, 2)}</pre></div>
           )}
         </section>
       </section>
