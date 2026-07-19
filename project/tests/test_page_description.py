@@ -128,6 +128,29 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         self.assertIn("p21_b2", result["block_ids"])
         self.assertNotIn("[footer]", result["draft_text"])
 
+    def test_footer_with_trailing_page_number_keeps_leading_section_number(self):
+        # Left/right textbook pages alternate footer order: the page number
+        # can trail a section number like "1." instead of leading like "118".
+        page_result = {
+            "page_id": 22,
+            "blocks": [
+                {"block_id": "p22_b1", "type": "paragraph", "text": "본문 내용이다.", "reading_order": 0},
+                {
+                    "block_id": "p22_b2",
+                    "type": "footer",
+                    "text": "1. 좌표평면과 그래프 119",
+                    "reading_order": 1,
+                },
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(
+            result["draft_text"],
+            "1. 좌표평면과 그래프\n\n[paragraph] 본문 내용이다.",
+        )
+
     def test_formula_falls_back_to_raw_text_when_description_missing(self):
         page_result, semantic_analyses = _mixed_page()
         semantic_analyses[0]["description"] = {"long_text": None, "short_text": None}

@@ -16,7 +16,6 @@ _TEXT_ONLY_TYPES = {"title", "section_title", "paragraph", "caption", "footer", 
 _ANALYZED_TYPES = {"formula", "table", "figure"}
 _RAW_TEXT_FALLBACK_TYPES = {"formula", "table"}
 _SECTION_LABEL_TYPES = {"footer", "page_number"}
-_LEADING_NUMBER_PATTERN = re.compile(r"^[\s\d]+")
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r".+?(?:[.!?。！？]+|$)", re.DOTALL)
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9가-힣])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9])")
@@ -88,15 +87,21 @@ def _collapse_whitespace(text: str) -> str:
 
 
 def _extract_section_label(text: str) -> str | None:
-    """Strip a leading page number from footer/page_number text, keeping only
-    a real running header if one remains.
+    """Strip a bare page number from footer/page_number text, keeping only a
+    real running header if one remains.
 
-    A textbook footer is usually just "118 Ⅲ. 좌표평면과 그래프" -- the page
-    number carries no content, but the chapter label after it identifies
-    where the page sits. If nothing but the number is there, return None so
-    the caller can drop the block entirely instead of surfacing noise.
+    The page number can sit on either side depending on the textbook's
+    left/right-page layout -- "118 Ⅲ. 좌표평면과 그래프" on one page,
+    "1. 좌표평면과 그래프 119" on the next (that leading "1." is a section
+    number, not a page number, so it must not be stripped). Only a digit run
+    with whitespace on its outer side is treated as the page number; a
+    footer that's nothing but a number returns None so the caller can drop
+    the block entirely instead of surfacing noise.
     """
-    stripped = _LEADING_NUMBER_PATTERN.sub("", text).strip()
+    if re.fullmatch(r"\d+", text.strip()):
+        return None
+    stripped = re.sub(r"^\d+\s+", "", text)
+    stripped = re.sub(r"\s+\d+$", "", stripped).strip()
     return stripped or None
 
 
