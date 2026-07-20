@@ -16,6 +16,11 @@ _TEXT_ONLY_TYPES = {"title", "section_title", "paragraph", "caption", "footer", 
 _ANALYZED_TYPES = {"formula", "table", "figure"}
 _RAW_TEXT_FALLBACK_TYPES = {"formula", "table"}
 _SECTION_LABEL_TYPES = {"footer", "page_number"}
+_DECORATIVE_TITLE_TYPES = {"title", "section_title"}
+# The chapter's running roman-numeral marker (already surfaced once via the
+# footer/page_number header) sometimes gets mistagged as its own title block
+# floating mid-page -- e.g. a lone "Ⅲ" with no other text.
+_BARE_ROMAN_NUMERAL_PATTERN = re.compile(r"^[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]$")
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r".+?(?:[.!?。！？]+|$)", re.DOTALL)
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z0-9가-힣])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9])")
@@ -147,6 +152,9 @@ def _build_draft(
                 section_labels.append(label)
                 if block_id is not None:
                     block_ids.append(str(block_id))
+            continue
+
+        if block_type in _DECORATIVE_TITLE_TYPES and _BARE_ROMAN_NUMERAL_PATTERN.match(text):
             continue
 
         lines.append(f"[{block_type}] {text}")

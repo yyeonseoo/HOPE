@@ -105,6 +105,38 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         self.assertEqual(result["draft_text"], "[paragraph] 본문 내용이다.")
         self.assertNotIn("p20_b2", result["block_ids"])
 
+    def test_bare_roman_numeral_title_is_excluded(self):
+        # The chapter's running roman-numeral marker sometimes gets mistagged
+        # as its own mid-page title block (e.g. a lone "Ⅲ").
+        page_result = {
+            "page_id": 23,
+            "blocks": [
+                {"block_id": "p23_b1", "type": "paragraph", "text": "첫 번째 문단이다.", "reading_order": 0},
+                {"block_id": "p23_b2", "type": "title", "text": "Ⅲ", "reading_order": 1},
+                {"block_id": "p23_b3", "type": "paragraph", "text": "두 번째 문단이다.", "reading_order": 2},
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(
+            result["draft_text"],
+            "[paragraph] 첫 번째 문단이다.\n[paragraph] 두 번째 문단이다.",
+        )
+        self.assertNotIn("p23_b2", result["block_ids"])
+
+    def test_real_roman_numeral_title_with_more_text_is_kept(self):
+        page_result = {
+            "page_id": 24,
+            "blocks": [
+                {"block_id": "p24_b1", "type": "title", "text": "Ⅲ단원 정리", "reading_order": 0},
+            ],
+        }
+
+        result = build_page_description(page_result, [])
+
+        self.assertEqual(result["draft_text"], "[title] Ⅲ단원 정리")
+
     def test_footer_with_chapter_label_becomes_page_header(self):
         page_result = {
             "page_id": 21,
