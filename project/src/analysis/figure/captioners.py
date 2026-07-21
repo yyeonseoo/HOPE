@@ -1736,19 +1736,33 @@ def _is_panel_number(sentence: str, claim: str) -> bool:
 
 
 def _substitute_stray_hanja(text: str) -> str:
-    """Convert stray Han characters (e.g. '\uacfc\u7a0b') back to their Korean reading.
+    """Convert stray Han characters back to their Korean reading.
 
-    Qwen3-VL is trained on plenty of Chinese text and occasionally emits the
-    Han form of a syllable instead of the intended Hangul one -- the same
-    morpheme, wrong script. Unlike the other checks in this module this is
-    safe to auto-correct rather than just warn about, since the character's
-    Sino-Korean reading is a fixed, unambiguous lookup, not a guess.
+    Qwen3-VL sometimes emits Han characters instead of the intended Hangul
+    syllables. Use hanja when available, and fall back to a small local map for
+    common textbook/caption artifacts.
     """
+    fallback_readings = {
+        "時": "시",
+        "間": "간",
+        "距": "거",
+        "離": "리",
+        "程": "정",
+    }
+
+    converted = text
+
     try:
         import hanja
+
+        converted = hanja.translate(converted, "substitution")
     except ImportError:
-        return text
-    return hanja.translate(text, "substitution")
+        pass
+
+    for han_char, reading in fallback_readings.items():
+        converted = converted.replace(han_char, reading)
+
+    return converted
 
 
 def _collapse_decimal_point_spacing(text: str) -> str:
