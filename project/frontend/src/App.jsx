@@ -335,7 +335,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <section className="toolbar">
-        <div><h1>경제수학 교과서 구조 분석</h1><p>레이아웃과 의미 분석 결과를 블록별로 검수합니다.</p></div>
+        <div><h1>HOPE</h1><p>레이아웃과 의미 분석 결과를 블록별로 검수합니다.</p></div>
         <div className="status-pill">{busy ? "처리 중" : "대기"}</div>
       </section>
       <section className="workspace">
