@@ -25,6 +25,7 @@ from analysis.formula.formula_analyzer import analyze_formula_blocks
 from analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
 from analysis.table import analyze_table_blocks
 from page_description import build_page_description
+from page_confidence import build_page_confidence
 
 app = FastAPI(title="Textbook Layout Parser API")
 
@@ -204,11 +205,18 @@ async def analyze_page(
         # through this endpoint on the current 2B/CPU setup.
         page_description_result = build_page_description(result["page"], semantic_analyses)
 
+        page_confidence_result = build_page_confidence(
+            result["page"],
+            semantic_analyses,
+            page_description_result,
+        )
+
         return {
             "page_count": page_count,
             "page": result["page"],
             "semantic_analyses": semantic_analyses,
             "page_description": page_description_result,
+            "page_confidence": page_confidence_result,
             "page_image": _image_data_url(result["page_image_path"]),
             "visualization_image": _image_data_url(result["visualization_path"]),
             "ocr_source": result["ocr_source"],
