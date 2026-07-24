@@ -171,6 +171,12 @@ class GroundedExactClaimTests(unittest.TestCase):
         self.assertEqual(result, "")
         self.assertTrue(warnings)
 
+    def test_keeps_zero_when_it_only_identifies_the_origin(self):
+        text = "첫 번째 그래프는 원점 0에서 시작해 일정하게 증가한다."
+        result, warnings = _remove_unsupported_exact_claims(text, [])
+        self.assertEqual(result, text)
+        self.assertEqual(warnings, [])
+
 
 class InvalidMonthMentionTests(unittest.TestCase):
     def test_valid_months_are_not_flagged(self):

@@ -41,14 +41,27 @@ _OUTPUT_INSTRUCTION = (
     "존댓말 종결어미는 사용하지 마세요."
 )
 
+_GRAPH_OUTPUT_INSTRUCTION = (
+    "목록이나 마크다운, 제목 없이 자연스러운 한국어 문단 하나로만 답하세요. 단일 그래프는 "
+    "2~4문장으로 쓰고, 소그래프가 여러 개이면 모든 소그래프를 빠짐없이 설명하기 위해 최대 "
+    "6문장까지 사용할 수 있습니다. 문장은 교과서 본문처럼 '~다/~이다/~한다'로 끝나는 평서형으로 "
+    "쓰고, '~습니다', '~해요'와 같은 존댓말 종결어미는 사용하지 마세요."
+)
+
 _TYPE_INSTRUCTIONS: dict[str, str] = {
     "graph": (
-        "그래프 유형 지침: 이 그래프가 무엇과 무엇을 비교하는지, 값이 증가하는지 감소하는지, "
-        "최댓값과 최솟값은 어디인지, 전체적인 추세가 어떤지를 중심으로 설명하세요."
+        "그래프 유형 지침: 먼저 이미지 안에 번호나 구획으로 분리된 소그래프가 몇 개인지 확인하세요. "
+        "소그래프가 여러 개이면 하나로 뭉뚱그리지 말고, 보이는 순서대로 모든 소그래프의 선이 "
+        "증가·유지·감소하는 구간을 각각 빠짐없이 설명하세요. 그다음 그래프가 무엇과 무엇을 "
+        "비교하는지와 전체적인 의미를 설명하세요. 눈금 숫자가 핵심이 아니라면 숫자를 옮겨 적는 대신 "
+        "'원점에서 시작한다'처럼 시각적 관계로 표현하세요."
     ),
     "line_chart": (
-        "그래프 유형 지침: 이 그래프가 무엇과 무엇을 비교하는지, 값이 증가하는지 감소하는지, "
-        "최댓값과 최솟값은 어디인지, 전체적인 추세가 어떤지를 중심으로 설명하세요."
+        "그래프 유형 지침: 먼저 이미지 안에 번호나 구획으로 분리된 소그래프가 몇 개인지 확인하세요. "
+        "소그래프가 여러 개이면 하나로 뭉뚱그리지 말고, 보이는 순서대로 모든 소그래프의 선이 "
+        "증가·유지·감소하는 구간을 각각 빠짐없이 설명하세요. 그다음 그래프가 무엇과 무엇을 "
+        "비교하는지와 전체적인 의미를 설명하세요. 눈금 숫자가 핵심이 아니라면 숫자를 옮겨 적는 대신 "
+        "'원점에서 시작한다'처럼 시각적 관계로 표현하세요."
     ),
     "bar_chart": (
         "그래프 유형 지침: 막대들이 나타내는 항목을 서로 비교하고, 어떤 항목이 가장 크거나 작은지, "
@@ -167,6 +180,11 @@ class FigurePromptBuilder:
         type_signal_section, use_type_signals = self._type_signal_section(type_signals)
         role_instruction, use_role_hint = self._role_instruction(context)
 
+        output_instruction = (
+            _GRAPH_OUTPUT_INSTRUCTION
+            if figure_type in {"graph", "line_chart"}
+            else _OUTPUT_INSTRUCTION
+        )
         sections = [
             _GOAL_INSTRUCTION,
             title_section,
@@ -177,7 +195,7 @@ class FigurePromptBuilder:
             role_instruction,
             _OCR_INSTRUCTION,
             _HALLUCINATION_GUARD,
-            _OUTPUT_INSTRUCTION,
+            output_instruction,
         ]
         prompt = "\n\n".join(part for part in sections if part)
         trace = PromptTrace(

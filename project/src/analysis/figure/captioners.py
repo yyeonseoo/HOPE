@@ -387,7 +387,11 @@ def _remove_unsupported_exact_claims(
         ]
         unsupported.extend(
             claim for claim in _EXACT_NUMBER_PATTERN.findall(sentence)
-            if claim not in supported_numbers and not _is_panel_number(sentence, claim)
+            if (
+                claim not in supported_numbers
+                and not _is_panel_number(sentence, claim)
+                and not _is_axis_origin_reference(sentence, claim)
+            )
         )
         if unsupported:
             removed_claims.extend(unsupported)
@@ -413,6 +417,14 @@ def _is_panel_number(sentence: str, claim: str) -> bool:
         rf"(?:도형|그래프|그림|패널|보기)\s*\(?\s*{number}\s*\)?",
     )
     return any(re.search(pattern, sentence) for pattern in patterns)
+
+
+def _is_axis_origin_reference(sentence: str, claim: str) -> bool:
+    """Keep zero when it merely names the graph origin/start, not a data value."""
+    normalized = claim.lstrip("+")
+    return normalized in {"0", "-0", "0.0", "-0.0"} and bool(
+        re.search(r"(?:원점|시작점|출발점|축의\s*교점)", sentence)
+    )
 
 
 def _normalized_evidence(evidence: Sequence[Any] | None) -> list[dict[str, Any]]:

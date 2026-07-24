@@ -1,13 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
+import {
+  createTextbookProject,
+  deleteWorkspacePage,
+  getTextbookProject,
+  listSavedPages,
+  listTextbookProjects,
+  projectFile,
+  saveWorkspacePage,
+} from "./workspaceStore";
 
 const API_BASE = "http://127.0.0.1:8000";
 const REVIEW_TYPES = ["formula", "table", "figure"];
+const LAYOUT_MODEL_OPTIONS = [
+  { value: "doclayout_yolo", label: "기본 보정 규칙", description: "일반 교과서에 권장" },
+  { value: "doclayout_yolo_unit3", label: "3단원 맞춤 보정 규칙", description: "좌표평면과 그래프 단원" },
+  { value: "doclayout_yolo_raw", label: "원본 모델 결과", description: "보정 없이 탐지 결과 확인" },
+];
 
 function fileSizeLabel(size) {
   if (!size) return "";
   if (size > 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   return `${(size / 1024).toFixed(1)} KB`;
+}
+
+function savedAtLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 async function parseError(response) {
@@ -173,8 +198,7 @@ function DescriptionResult({ description, captioningEnabled }) {
         <div><dt>생성 신뢰도</dt><dd><Confidence value={description.confidence} /></dd></div>
         <div><dt>생성 시간</dt><dd><Seconds value={description.generation_time_seconds} /></dd></div>
       </dl>
-      <div><strong>짧은 설명</strong><p>{description.short_text || "없음"}</p></div>
-      <div><strong>상세 설명</strong><p>{description.long_text || "없음"}</p></div>
+      <div><strong>접근성 설명</strong><p>{description.long_text || description.short_text || "없음"}</p></div>
       <div><strong>점역 참고</strong><p>{description.transcription_notes || "없음"}</p></div>
       <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
     </div>
@@ -183,7 +207,13 @@ function DescriptionResult({ description, captioningEnabled }) {
 
 function PageSourceViewer({ result, selectedFigure, onClearFigure }) {
   const [imageSize, setImageSize] = useState(null);
+  const [magnifierEnabled, setMagnifierEnabled] = useState(false);
+  const [magnifier, setMagnifier] = useState(null);
+  const [pageZoom, setPageZoom] = useState(100);
   const bbox = selectedFigure?.bbox;
+  const magnifierWidth = 220;
+  const magnifierHeight = 150;
+  const magnifierZoom = 2.25;
   const overlayStyle = bbox && imageSize ? {
     left: `${(bbox[0] / imageSize.width) * 100}%`,
     top: `${(bbox[1] / imageSize.height) * 100}%`,
@@ -191,14 +221,90 @@ function PageSourceViewer({ result, selectedFigure, onClearFigure }) {
     height: `${((bbox[3] - bbox[1]) / imageSize.height) * 100}%`,
   } : null;
 
+  useEffect(() => {
+    setMagnifier(null);
+    setMagnifierEnabled(false);
+    setPageZoom(100);
+  }, [result.page_image]);
+
+  function updateMagnifier(event) {
+    if (!magnifierEnabled) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scale = pageZoom / 100;
+    const imageWidth = rect.width / scale;
+    const imageHeight = rect.height / scale;
+    const lensWidth = magnifierWidth / scale;
+    const lensHeight = magnifierHeight / scale;
+    const x = Math.max(0, Math.min(imageWidth, (event.clientX - rect.left) / scale));
+    const y = Math.max(0, Math.min(imageHeight, (event.clientY - rect.top) / scale));
+    const left = Math.max(0, Math.min(imageWidth - lensWidth, x - lensWidth / 2));
+    const top = Math.max(0, Math.min(imageHeight - lensHeight, y - lensHeight / 2));
+    setMagnifier({
+      left,
+      top,
+      width: lensWidth,
+      height: lensHeight,
+      backgroundSize: `${imageWidth * magnifierZoom}px ${imageHeight * magnifierZoom}px`,
+      backgroundPosition: `${x - left - x * magnifierZoom}px ${y - top - y * magnifierZoom}px`,
+    });
+  }
+
+  function changePageZoom(nextZoom) {
+    setPageZoom(Math.max(75, Math.min(200, nextZoom)));
+    setMagnifier(null);
+  }
+
   return (
     <section className="page-source-pane">
       <div className="page-review-heading">
         <div><span>원본 교과서</span><h3>{result.page?.page_id}페이지</h3></div>
-        {selectedFigure && <button className="text-button" onClick={onClearFigure}>전체 페이지 보기</button>}
+        <div className="page-actions">
+          {selectedFigure && <button className="text-button" onClick={onClearFigure}>전체 페이지 보기</button>}
+          <div className="page-zoom-controls" aria-label="교과서 페이지 확대 및 축소">
+            <button
+              type="button"
+              aria-label="페이지 축소"
+              disabled={pageZoom <= 75}
+              onClick={() => changePageZoom(pageZoom - 25)}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="page-zoom-value"
+              title="원래 크기로 돌아가기"
+              onClick={() => changePageZoom(100)}
+            >
+              {pageZoom}%
+            </button>
+            <button
+              type="button"
+              aria-label="페이지 확대"
+              disabled={pageZoom >= 200}
+              onClick={() => changePageZoom(pageZoom + 25)}
+            >
+              +
+            </button>
+          </div>
+          <button
+            type="button"
+            className={`magnifier-toggle ${magnifierEnabled ? "active" : ""}`}
+            aria-pressed={magnifierEnabled}
+            onClick={() => {
+              setMagnifierEnabled((current) => !current);
+              setMagnifier(null);
+            }}
+          >
+            <span className="magnifier-icon" aria-hidden="true" />
+            {magnifierEnabled ? "돋보기 끄기" : "돋보기"}
+          </button>
+        </div>
       </div>
-      <div className="page-image-stage">
-        <div className="page-image-wrap">
+      <div className={`page-image-stage ${pageZoom > 100 ? "page-zoomed" : ""}`}>
+        <div
+          className={`page-image-wrap ${magnifierEnabled ? "magnifier-active" : ""}`}
+          style={{ transform: `scale(${pageZoom / 100})` }}
+        >
           <img
             src={result.page_image}
             alt={`${result.page?.page_id}페이지 원본 교과서`}
@@ -206,8 +312,26 @@ function PageSourceViewer({ result, selectedFigure, onClearFigure }) {
               width: event.currentTarget.naturalWidth,
               height: event.currentTarget.naturalHeight,
             })}
+            onMouseEnter={updateMagnifier}
+            onMouseMove={updateMagnifier}
+            onMouseLeave={() => setMagnifier(null)}
           />
           {overlayStyle && <span className="figure-highlight" style={overlayStyle} aria-hidden="true" />}
+          {magnifierEnabled && magnifier && (
+            <span
+              className="page-magnifier"
+              aria-hidden="true"
+              style={{
+                left: magnifier.left,
+                top: magnifier.top,
+                width: magnifier.width,
+                height: magnifier.height,
+                backgroundImage: `url("${result.page_image}")`,
+                backgroundSize: magnifier.backgroundSize,
+                backgroundPosition: magnifier.backgroundPosition,
+              }}
+            />
+          )}
         </div>
         {selectedFigure && (
           <div className="figure-popover" role="dialog" aria-label="선택한 Figure 원본">
@@ -430,16 +554,133 @@ function AnalysisInspector({ result, type }) {
   );
 }
 
+function LayoutModelSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const optionRefs = useRef([]);
+  const selectedIndex = Math.max(0, LAYOUT_MODEL_OPTIONS.findIndex((option) => option.value === value));
+  const selected = LAYOUT_MODEL_OPTIONS[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        rootRef.current?.querySelector(".layout-select-trigger")?.focus();
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  function openAndFocus(index = selectedIndex) {
+    setOpen(true);
+    window.requestAnimationFrame(() => optionRefs.current[index]?.focus());
+  }
+
+  function handleOptionKeyDown(event, index) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const last = LAYOUT_MODEL_OPTIONS.length - 1;
+    const nextIndex = event.key === "Home" ? 0
+      : event.key === "End" ? last
+        : event.key === "ArrowDown" ? Math.min(last, index + 1)
+          : Math.max(0, index - 1);
+    optionRefs.current[nextIndex]?.focus();
+  }
+
+  return (
+    <div className="layout-select-control" ref={rootRef}>
+      <button
+        type="button"
+        className={`layout-select-trigger ${open ? "open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => (open ? setOpen(false) : openAndFocus())}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            openAndFocus(event.key === "ArrowDown" ? selectedIndex : LAYOUT_MODEL_OPTIONS.length - 1);
+          }
+        }}
+      >
+        <span>{selected.label}</span>
+        <span className="layout-select-chevron" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="layout-options" role="listbox" aria-label="Layout 분석 방식">
+          {LAYOUT_MODEL_OPTIONS.map((option, index) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              className={`layout-option ${option.value === value ? "selected" : ""}`}
+              key={option.value}
+              ref={(element) => { optionRefs.current[index] = element; }}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              onKeyDown={(event) => handleOptionKeyDown(event, index)}
+            >
+              <span className="layout-option-copy">
+                <strong>{option.label}</strong>
+                <small>{option.description}</small>
+              </span>
+              {option.value === value && <span className="layout-option-check" aria-hidden="true">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [file, setFile] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [projectPageCounts, setProjectPageCounts] = useState({});
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [savedPages, setSavedPages] = useState([]);
+  const [resultOwnerId, setResultOwnerId] = useState(null);
+  const [screen, setScreen] = useState("library");
   const [pageCount, setPageCount] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [dpi, setDpi] = useState(120);
+  const [layoutModel, setLayoutModel] = useState("doclayout_yolo");
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState("layout");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const projectFileInputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreWorkspace() {
+      try {
+        const storedProjects = await listTextbookProjects();
+        if (cancelled) return;
+        setProjects(storedProjects);
+        const pageLists = await Promise.all(storedProjects.map((project) => listSavedPages(project.id)));
+        if (cancelled) return;
+        setProjectPageCounts(Object.fromEntries(
+          storedProjects.map((project, index) => [project.id, pageLists[index].length]),
+        ));
+      } catch (err) {
+        if (!cancelled) setError(`저장된 작업을 불러오지 못했습니다. ${err.message}`);
+      }
+    }
+    restoreWorkspace();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (status !== "counting" && status !== "analyzing") {
@@ -462,16 +703,109 @@ export default function App() {
     }, {});
   }, [result]);
 
+  async function openProject(projectId, preferredPageNumber = null) {
+    setResult(null);
+    setResultOwnerId(null);
+    setError("");
+    try {
+      const [project, pages] = await Promise.all([
+        getTextbookProject(projectId),
+        listSavedPages(projectId),
+      ]);
+      if (!project) throw new Error("저장된 교과서 정보를 찾을 수 없습니다.");
+
+      setActiveProjectId(projectId);
+      setScreen("workspace");
+      setFile(projectFile(project));
+      setPageCount(project.pageCount);
+      setSavedPages(pages);
+
+      const restoredPage = preferredPageNumber
+        ? pages.find((page) => page.pageNumber === preferredPageNumber)
+        : pages.at(-1);
+
+      if (restoredPage) {
+        setPageNumber(restoredPage.pageNumber);
+        setDpi(restoredPage.settings?.dpi || 120);
+        setLayoutModel(restoredPage.settings?.layoutModel || "doclayout_yolo");
+        setResult(restoredPage.result);
+        setResultOwnerId(projectId);
+        setActiveView("page");
+      } else {
+        setPageNumber(1);
+        setActiveView("layout");
+      }
+    } catch (err) {
+      setError(`교과서 작업을 열지 못했습니다. ${err.message}`);
+    }
+  }
+
+  function openSavedPage(page) {
+    setPageNumber(page.pageNumber);
+    setDpi(page.settings?.dpi || 120);
+    setLayoutModel(page.settings?.layoutModel || "doclayout_yolo");
+    setResult(page.result);
+    setResultOwnerId(page.projectId);
+    setActiveView("page");
+    setError("");
+  }
+
+  async function deleteSavedPage(page) {
+    const confirmed = window.confirm(`${page.pageNumber}페이지의 저장된 분석 결과를 삭제할까요?`);
+    if (!confirmed) return;
+
+    try {
+      const visibleResultPage = Number(result?.page?.page_id);
+      if (resultOwnerId === page.projectId && visibleResultPage === page.pageNumber) {
+        setResult(null);
+        setResultOwnerId(null);
+        setActiveView("layout");
+      }
+      await deleteWorkspacePage(page.projectId, page.pageNumber);
+      setSavedPages((current) => current.filter((item) => item.pageNumber !== page.pageNumber));
+      setProjectPageCounts((current) => ({
+        ...current,
+        [page.projectId]: Math.max(0, (current[page.projectId] || 0) - 1),
+      }));
+    } catch (err) {
+      setError(`저장된 페이지를 삭제하지 못했습니다. ${err.message}`);
+    }
+  }
+
   async function handleFileChange(event) {
     const nextFile = event.target.files?.[0] || null;
-    setFile(nextFile); setPageCount(null); setResult(null); setError(""); setPageNumber(1);
+    event.target.value = "";
     if (!nextFile) return;
+
+    const existingProject = projects.find((project) => (
+      project.fileName === nextFile.name
+      && project.fileSize === nextFile.size
+      && project.fileLastModified === nextFile.lastModified
+    ));
+    if (existingProject) {
+      await openProject(existingProject.id);
+      return;
+    }
+
+    setFile(nextFile);
+    setPageCount(null);
+    setResult(null);
+    setResultOwnerId(null);
+    setError("");
+    setPageNumber(1);
     setStatus("counting");
     const formData = new FormData(); formData.append("file", nextFile);
     try {
       const response = await fetch(`${API_BASE}/api/page-count`, { method: "POST", body: formData });
       if (!response.ok) throw new Error(await parseError(response));
-      setPageCount((await response.json()).page_count);
+      const count = (await response.json()).page_count;
+      const project = await createTextbookProject(nextFile, count);
+      setProjects((current) => [project, ...current]);
+      setProjectPageCounts((current) => ({ ...current, [project.id]: 0 }));
+      setActiveProjectId(project.id);
+      setScreen("workspace");
+      setSavedPages([]);
+      setPageCount(count);
     } catch (err) { setError(err.message); } finally { setStatus("idle"); }
   }
 
@@ -480,14 +814,56 @@ export default function App() {
     setStatus("analyzing"); setError(""); setResult(null);
     const formData = new FormData();
     formData.append("file", file); formData.append("page_number", String(pageNumber));
-    formData.append("dpi", String(dpi)); formData.append("lang", "korean"); formData.append("layout_model", "doclayout_yolo_unit3");
+    formData.append("dpi", String(dpi)); formData.append("lang", "korean"); formData.append("layout_model", layoutModel);
     formData.append("figure_captioning", "true");
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, { method: "POST", body: formData });
       if (!response.ok) throw new Error(await parseError(response));
-      const payload = await response.json(); setResult(payload); setPageCount(payload.page_count); setActiveView("layout");
+      const payload = await response.json();
+      setResult(payload);
+      setResultOwnerId(activeProjectId);
+      setPageCount(payload.page_count);
+      setActiveView("layout");
+
+      if (activeProjectId) {
+        const savedPage = await saveWorkspacePage(activeProjectId, pageNumber, payload, { dpi, layoutModel });
+        setSavedPages((current) => (
+          [...current.filter((page) => page.pageNumber !== pageNumber), savedPage]
+            .sort((a, b) => a.pageNumber - b.pageNumber)
+        ));
+        setProjectPageCounts((current) => ({
+          ...current,
+          [activeProjectId]: new Set([...savedPages.map((page) => page.pageNumber), pageNumber]).size,
+        }));
+        setProjects((current) => current.map((project) => (
+          project.id === activeProjectId ? { ...project, updatedAt: savedPage.savedAt } : project
+        )));
+      }
     } catch (err) { setError(err.message); } finally { setStatus("idle"); }
   }
+
+  useEffect(() => {
+    if (!result || !activeProjectId || resultOwnerId !== activeProjectId) return undefined;
+    const analyzedPageNumber = Number(result?.page?.page_id);
+    if (!Number.isInteger(analyzedPageNumber) || analyzedPageNumber < 1) return undefined;
+    const timer = window.setTimeout(async () => {
+      try {
+        const savedPage = await saveWorkspacePage(
+          activeProjectId,
+          analyzedPageNumber,
+          result,
+          { dpi, layoutModel },
+        );
+        setSavedPages((current) => (
+          [...current.filter((page) => page.pageNumber !== analyzedPageNumber), savedPage]
+            .sort((a, b) => a.pageNumber - b.pageNumber)
+        ));
+      } catch (err) {
+        setError(`페이지 결과를 자동 저장하지 못했습니다. ${err.message}`);
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [activeProjectId, result, resultOwnerId]);
 
   function updatePageDescription(text) {
     setResult((current) => {
@@ -527,36 +903,141 @@ export default function App() {
         </div>
         <div className={`status-pill ${busy ? "busy" : ""}`}><span />{busy ? "분석 진행 중" : "분석 준비"}</div>
       </section>
-      <section className="workspace">
+      <input
+        ref={projectFileInputRef}
+        className="visually-hidden"
+        type="file"
+        accept="application/pdf"
+        onChange={handleFileChange}
+      />
+      {screen === "library" ? (
+        <section className="textbook-library">
+          <div className="library-heading">
+            <div>
+              <span>나의 작업공간</span>
+              <h2>교과서 보관함</h2>
+              <p>교과서를 선택해 분석을 이어가거나 새로운 교과서를 추가하세요.</p>
+            </div>
+          </div>
+          <div className="textbook-grid">
+            {projects.map((project, index) => (
+              <button
+                key={project.id}
+                type="button"
+                className="textbook-card"
+                onClick={() => openProject(project.id)}
+              >
+                <span className={`textbook-cover cover-${(index % 4) + 1}`} aria-hidden="true">
+                  <span>HOPE</span>
+                  <strong>{project.name.replace(/\.pdf$/i, "").slice(0, 18)}</strong>
+                  <i />
+                </span>
+                <span className="textbook-card-copy">
+                  <strong>{project.name.replace(/\.pdf$/i, "")}</strong>
+                  <small>{project.pageCount}페이지 · {fileSizeLabel(project.fileSize)}</small>
+                  <span>
+                    <em>{projectPageCounts[project.id] || 0}페이지 저장</em>
+                    <time>{savedAtLabel(project.updatedAt)}</time>
+                  </span>
+                </span>
+                <span className="textbook-open" aria-hidden="true">→</span>
+              </button>
+            ))}
+            {projects.length > 0 && (
+              <button type="button" className="new-textbook-card" onClick={() => projectFileInputRef.current?.click()}>
+                <span aria-hidden="true">＋</span>
+                <strong>새 교과서 추가</strong>
+                <small>PDF 파일을 불러와 작업공간을 만듭니다.</small>
+              </button>
+            )}
+          </div>
+          {projects.length === 0 && (
+            <button type="button" className="library-guide" onClick={() => projectFileInputRef.current?.click()}>
+              <span aria-hidden="true">▥</span>
+              <p>아직 저장된 교과서가 없습니다.<br />첫 교과서 PDF를 추가해 분석을 시작하세요.</p>
+            </button>
+          )}
+        </section>
+      ) : (
+        <>
+          <section className="workspace-heading">
+            <button type="button" onClick={() => setScreen("library")}><span aria-hidden="true">←</span> 교과서 보관함</button>
+            <div>
+              <h2>{file?.name.replace(/\.pdf$/i, "")}</h2>
+              <p>{savedPages.length}개 페이지 저장됨</p>
+            </div>
+          </section>
+          <section className="workspace">
         <aside className="control-panel">
           <div className="panel-heading">
             <span>새 분석</span>
             <h2>교과서 PDF 설정</h2>
             <p>분석할 파일과 페이지를 선택하세요.</p>
           </div>
-          <label className={`file-drop ${file ? "has-file" : ""}`}>
-            <input type="file" accept="application/pdf" onChange={handleFileChange} />
+          <div className={`file-drop ${file ? "has-file" : ""}`}>
             <span className="upload-icon" aria-hidden="true"><UploadIcon uploaded={Boolean(file)} /></span>
-            <span className="file-title">{file ? file.name : "교과서 PDF 불러오기"}</span>
-            <span className="file-meta">{file ? `${fileSizeLabel(file.size)} · 다른 파일 선택` : "클릭하여 PDF 파일을 선택하세요"}</span>
-          </label>
+            <span className="file-title">{file?.name}</span>
+            <span className="file-meta">{file ? `${fileSizeLabel(file.size)} · 작업공간에 저장됨` : ""}</span>
+          </div>
           <div className="settings-card">
             <div className="settings-title"><strong>분석 범위</strong><span>Layout 분석</span></div>
             <div className="field-row">
               <label>페이지<input type="number" min="1" max={pageCount || 1} value={pageNumber} onChange={(event) => setPageNumber(Number(event.target.value))} /></label>
               <label>해상도(DPI)<input type="number" min="120" max="300" step="20" value={dpi} onChange={(event) => setDpi(Number(event.target.value))} /></label>
             </div>
+            <div className="layout-select-field">
+              <span>Layout 분석 방식</span>
+              <LayoutModelSelect value={layoutModel} onChange={setLayoutModel} />
+            </div>
             <div className="page-count"><span>전체 페이지</span><strong>{pageCount ?? "-"}</strong></div>
           </div>
-          <div className="model-field"><span>접근성 설명 자동 생성</span><strong>GPT-5 · OpenAI API</strong><small>Figure와 주변 문맥을 함께 분석하며, Figure 수에 따라 시간이 길어질 수 있습니다.</small></div>
           <button className="primary-button" disabled={busy || !file} onClick={analyzePage}>
             <span>{status === "analyzing" ? "분석 중" : "페이지 분석 시작"}</span>
             <span aria-hidden="true">{status === "analyzing" ? "···" : "→"}</span>
           </button>
           {error && <div className="error-box">{error}</div>}
+          {activeProjectId && (
+            <section className="saved-pages-card">
+              <div className="saved-pages-header">
+                <span>저장된 페이지</span>
+                <strong>{savedPages.length}</strong>
+              </div>
+              {savedPages.length > 0 ? (
+                <div className="saved-page-list">
+                  {savedPages.map((page) => (
+                    <div
+                      key={page.id}
+                      className={`saved-page-item ${
+                        resultOwnerId === page.projectId
+                        && Number(result?.page?.page_id) === page.pageNumber
+                          ? "active"
+                          : ""
+                      }`}
+                    >
+                      <button type="button" className="saved-page-open" onClick={() => openSavedPage(page)}>
+                        <span><strong>{page.pageNumber}</strong> 페이지</span>
+                        <small>{page.reviewStatus === "reviewed" ? "검수 완료" : "자동 저장"}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className="saved-page-delete"
+                        onClick={() => deleteSavedPage(page)}
+                        aria-label={`${page.pageNumber}페이지 저장 결과 삭제`}
+                        title="저장 결과 삭제"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>분석을 완료한 페이지가 여기에 자동 저장됩니다.</p>
+              )}
+            </section>
+          )}
           {result && <div className="stats"><div className="stats-header"><span>탐지 블록</span><strong>{result.page.blocks.length}</strong></div><div className="type-list">{Object.entries(blockStats).map(([type, count]) => <div key={type}><span>{type}</span><strong>{count}</strong></div>)}</div><button className="secondary-button" onClick={downloadJson}>JSON 다운로드</button></div>}
         </aside>
-        <section className="result-workspace">
+        <section className={`result-workspace ${activeView === "page" ? "page-workspace" : ""}`}>
           <nav className="view-tabs" aria-label="결과 보기">{tabs.map((tab) => <button key={tab.id} className={activeView === tab.id ? "active" : ""} onClick={() => setActiveView(tab.id)}>{tab.label}</button>)}</nav>
           {busy ? <ProcessingState status={status} elapsedSeconds={elapsedSeconds} /> : !result ? (
             <div className="empty-state result-empty">
@@ -570,7 +1051,9 @@ export default function App() {
             <div className="json-view"><pre>{JSON.stringify({ ...result.page, semantic_analyses: result.semantic_analyses || [], page_description: result.page_description || null }, null, 2)}</pre></div>
           )}
         </section>
-      </section>
+          </section>
+        </>
+      )}
     </main>
   );
 }

@@ -72,8 +72,15 @@ class FigurePromptBuilderTests(unittest.TestCase):
         prompt = self._prompt("graph", FigureContext())
 
         self.assertIn("증가", prompt)
-        self.assertIn("최댓값", prompt)
-        self.assertIn("추세", prompt)
+        self.assertIn("모든 소그래프", prompt)
+        self.assertIn("증가·유지·감소", prompt)
+
+    def test_graph_prompt_requires_each_panel_in_visual_order(self):
+        prompt = self._prompt("graph", FigureContext())
+
+        self.assertIn("보이는 순서대로", prompt)
+        self.assertIn("각각 빠짐없이", prompt)
+        self.assertIn("최대 6문장", prompt)
 
     def test_unknown_figure_type_falls_back_to_illustration_branch(self):
         context = FigureContext()
