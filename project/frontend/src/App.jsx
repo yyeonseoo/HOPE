@@ -347,7 +347,7 @@ export default function App() {
           </div>
           <label className="model-field">Layout model<select value={layoutModel} onChange={(event) => setLayoutModel(event.target.value)}><option value="doclayout_yolo">DocLayout-YOLO + 보정 규칙</option><option value="doclayout_yolo_unit3">DocLayout-YOLO + 3단원 보정 규칙</option><option value="doclayout_yolo_raw">DocLayout-YOLO 원본</option></select></label>
           <label className="toggle-field"><input type="checkbox" checked={figureCaptioning} onChange={(event) => setFigureCaptioning(event.target.checked)} /><span>Figure 설명 생성</span></label>
-          {figureCaptioning && <div className="model-field"><span>Figure model</span><strong>Qwen3-VL-2B-Instruct</strong><small>최초 분석 시 Hugging Face 모델을 내려받아 시간이 오래 걸릴 수 있습니다.</small></div>}
+          {figureCaptioning && <div className="model-field"><span>Figure model</span><strong>GPT-4o (OpenAI API)</strong><small>OpenAI API를 호출하여 설명을 생성합니다.</small></div>}
           <div className="page-count"><span>전체 페이지</span><strong>{pageCount ?? "-"}</strong></div>
           <button className="primary-button" disabled={busy || !file} onClick={analyzePage}>{status === "analyzing" ? "분석 중..." : "페이지 분석"}</button>
           {error && <div className="error-box">{error}</div>}

@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from src.analysis.figure.captioners import CaptionOutput, Florence2ImageCaptioner, Qwen3VLCaptioner
-from src.analysis.figure.hf_pipeline import HuggingFaceFigureCaptionEngine, create_huggingface_figure_engine
+from src.analysis.figure.captioners import CaptionOutput, ChatGPTCaptioner, Florence2ImageCaptioner
+from src.analysis.figure.hf_pipeline import HuggingFaceFigureCaptionEngine, create_openai_figure_engine
 from src.analysis.figure.openclip_classifier import RoutePrediction
 
 
@@ -69,6 +69,16 @@ class ContextCaptioner(FakeCaptioner):
 
 class InlineContextCaptioner(ContextCaptioner):
     handles_context_inline = True
+
+
+class FakeGroundingScorer:
+    def __init__(self, similarity):
+        self.similarity = similarity
+        self.calls = []
+
+    def score(self, caption, context):
+        self.calls.append((caption, context))
+        return self.similarity
 
 
 class HuggingFacePipelineTests(unittest.TestCase):
@@ -151,55 +161,38 @@ class HuggingFacePipelineTests(unittest.TestCase):
 
         self.assertIsNone(captioner.context)
 
-    def test_factory_is_lazy_and_uses_qwen(self):
-        engine = create_huggingface_figure_engine(device="cpu")
+    def test_low_topic_similarity_adds_a_warning(self):
+        captioner = ContextCaptioner("도로 위의 자동차 사진이다.")
+        grounding_scorer = FakeGroundingScorer(0.05)
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("graph"), captioner, grounding_scorer)
+        context = [{"block_id": "p2_b4", "type": "paragraph", "score": 1.0, "text": "x와 y가 정비례하는 관계"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = engine.analyze(self._image(tmp), context=context)
 
-        self.assertEqual(engine.captioner.model_name, "Qwen/Qwen3-VL-2B-Instruct")
+        self.assertTrue(any("topical similarity" in warning for warning in output["warnings"]))
+        self.assertEqual(grounding_scorer.calls[0][0], "도로 위의 자동차 사진이다.")
+
+    def test_normal_topic_similarity_adds_no_warning(self):
+        captioner = ContextCaptioner("정비례 관계를 나타낸 표이다.")
+        grounding_scorer = FakeGroundingScorer(0.8)
+        engine = HuggingFaceFigureCaptionEngine(FakeClassifier("graph"), captioner, grounding_scorer)
+        context = [{"block_id": "p2_b4", "type": "paragraph", "score": 1.0, "text": "x와 y가 정비례하는 관계"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = engine.analyze(self._image(tmp), context=context)
+
+        self.assertFalse(any("topical similarity" in warning for warning in output["warnings"]))
+
+    def test_openai_factory_is_lazy_and_uses_chatgpt(self):
+        engine = create_openai_figure_engine(device="cpu", api_key="test-key")
+
+        self.assertIsInstance(engine.captioner, ChatGPTCaptioner)
+        self.assertEqual(engine.captioner.model_name, "gpt-4o")
+        self.assertEqual(engine.captioner.api_key, "test-key")
+        self.assertIsNone(engine.captioner._client)
         self.assertEqual(engine.classifier.device_request, "cpu")
         self.assertIsNone(engine.classifier._model)
-
-    def test_qwen_loader_uses_native_transformers_class(self):
-        calls = {}
-
-        class FakeParameter:
-            dtype = "bfloat16"
-
-        class FakeLoadedModel:
-            def to(self, device):
-                calls["device"] = device
-                return self
-
-            def eval(self):
-                calls["eval"] = True
-
-            def parameters(self):
-                return iter([FakeParameter()])
-
-        class FakeModelClass:
-            @classmethod
-            def from_pretrained(cls, model_name, **kwargs):
-                calls["model"] = (model_name, kwargs)
-                return FakeLoadedModel()
-
-        class FakeProcessorClass:
-            @classmethod
-            def from_pretrained(cls, model_name, **kwargs):
-                calls["processor"] = (model_name, kwargs)
-                return object()
-
-        fake_transformers = SimpleNamespace(
-            AutoProcessor=FakeProcessorClass,
-            Qwen3VLForConditionalGeneration=FakeModelClass,
-        )
-        captioner = Qwen3VLCaptioner(device="cpu", revision="test-revision")
-
-        with patch.dict("sys.modules", {"transformers": fake_transformers}):
-            captioner._load(SimpleNamespace())
-
-        self.assertEqual(calls["model"][0], "Qwen/Qwen3-VL-2B-Instruct")
-        self.assertEqual(calls["model"][1]["dtype"], "auto")
-        self.assertEqual(calls["processor"][1]["revision"], "test-revision")
-        self.assertTrue(calls["eval"])
+        self.assertEqual(engine.grounding_scorer.device_request, "cpu")
+        self.assertIsNone(engine.grounding_scorer._model)
 
     def test_florence_loader_uses_native_class_without_remote_code(self):
         calls = {}

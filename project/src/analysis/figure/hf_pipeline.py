@@ -5,8 +5,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
-from .captioners import Qwen3VLCaptioner
+from .captioners import ChatGPTCaptioner
 from .context import augment_caption_with_context
+from .grounding import TopicGroundingScorer, find_topic_mismatch_warning
 from .openclip_classifier import FigureRouteClassifier
 
 
@@ -19,10 +20,12 @@ class HuggingFaceFigureCaptionEngine:
     def __init__(
         self,
         classifier: FigureRouteClassifier,
-        captioner: Qwen3VLCaptioner,
+        captioner: ChatGPTCaptioner,
+        grounding_scorer: TopicGroundingScorer | None = None,
     ) -> None:
         self.classifier = classifier
         self.captioner = captioner
+        self.grounding_scorer = grounding_scorer or TopicGroundingScorer()
 
     def analyze(
         self,
@@ -61,6 +64,8 @@ class HuggingFaceFigureCaptionEngine:
         warnings = list(caption.warnings)
         if caption.confidence is None:
             warnings.append("Caption confidence was unavailable from the generation model.")
+        _, mismatch_warnings = find_topic_mismatch_warning(caption.text, context, self.grounding_scorer)
+        warnings.extend(mismatch_warnings)
         return {
             "model": {
                 "name": getattr(self.classifier, "model_name", self.classifier.__class__.__name__),
@@ -77,15 +82,25 @@ class HuggingFaceFigureCaptionEngine:
             "warnings": warnings,
             "description_only": True,
         }
-def create_huggingface_figure_engine(
+def create_openai_figure_engine(
     *,
     device: str = "auto",
-    model_id: str = Qwen3VLCaptioner.model_name,
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> HuggingFaceFigureCaptionEngine:
-    """Build the five-way OpenCLIP + Qwen3-VL pipeline lazily."""
+    """Build the OpenCLIP + ChatGPT (vision) pipeline lazily.
+
+    Figure-type routing (OpenCLIP) and topic grounding stay local; only
+    caption generation is delegated to the OpenAI API. `api_key` defaults to
+    the `OPENAI_API_KEY` environment variable when omitted, matching the
+    OpenAI SDK's own default. `model` defaults to the `HOPE_FIGURE_GPT_MODEL`
+    environment variable (falling back to `gpt-4o`) when omitted -- see
+    `ChatGPTCaptioner.__init__`.
+    """
     from .openclip_classifier import OpenCLIPFigureTypeClassifier
 
     return HuggingFaceFigureCaptionEngine(
         classifier=OpenCLIPFigureTypeClassifier(device=device),
-        captioner=Qwen3VLCaptioner(model_id=model_id, device=device),
+        captioner=ChatGPTCaptioner(model=model, api_key=api_key),
+        grounding_scorer=TopicGroundingScorer(device=device),
     )

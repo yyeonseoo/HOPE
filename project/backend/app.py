@@ -22,7 +22,7 @@ from ocr import _load_paddleocr
 from pdf_text import extract_pdf_text_lines
 from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
-from analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
+from analysis.figure import analyze_figure_blocks, create_openai_figure_engine
 from analysis.table import analyze_table_blocks
 from page_description import build_page_description
 
@@ -54,9 +54,9 @@ def _get_figure_engine(request_enabled: bool):
     if not enabled:
         return None
     device = os.getenv("HOPE_FIGURE_DEVICE", "auto")
-    cache_key = (device, "qwen3-vl-2b")
+    cache_key = (device, "gpt-4o")
     if cache_key not in _FIGURE_ENGINES:
-        _FIGURE_ENGINES[cache_key] = create_huggingface_figure_engine(device=device)
+        _FIGURE_ENGINES[cache_key] = create_openai_figure_engine(device=device)
     return _FIGURE_ENGINES[cache_key]
 
 
@@ -195,13 +195,8 @@ async def analyze_page(
                 )
             semantic_analyses.extend(figure_analyses)
 
-        # Deterministic reading-order text only -- no model. The optional
-        # Qwen-based rewrite (`generate_page_description`) exists and is
-        # tested, but isn't wired in here yet: on real pages it produced
-        # garbled vocabulary (not just fabricated numbers/equations, which
-        # build_page_description's grounding check catches) that slipped
-        # through as a "clean" result, so it isn't reliable enough to expose
-        # through this endpoint on the current 2B/CPU setup.
+        # Deterministic reading-order text only -- no model rewrite is wired
+        # in here.
         page_description_result = build_page_description(result["page"], semantic_analyses)
 
         return {
@@ -214,5 +209,5 @@ async def analyze_page(
             "ocr_source": result["ocr_source"],
             "layout_mode": result["layout_mode"],
             "figure_captioning_enabled": figure_engine is not None,
-            "figure_caption_model": "Qwen/Qwen3-VL-2B-Instruct" if figure_engine is not None else None,
+            "figure_caption_model": figure_engine.captioner.model_name if figure_engine is not None else None,
         }

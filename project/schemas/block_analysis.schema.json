@@ -54,7 +54,45 @@
       }
     },
     "description": { "$ref": "#/$defs/description" },
-    "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+    "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "figure_type": {
+      "description": "Optional top-level mirror of analysis.result.figure_type, set by the figure module's context-aware pipeline.",
+      "enum": ["graph", "table", "mathematical_diagram", "illustration", "photo", "line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "icon", "other", "unknown", null]
+    },
+    "education_context": { "$ref": "#/$defs/educationContext" },
+    "grounding": { "$ref": "#/$defs/grounding" },
+    "confidence": {
+      "description": "Optional top-level convenience mirror of description.confidence (or grounding.overall_score as a fallback), set by the figure module's context-aware pipeline.",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "summary": {
+      "description": "One-sentence (~30 characters), screen-reader-friendly headline derived from description.long_text (src/analysis/figure/summary.py).",
+      "type": ["string", "null"]
+    },
+    "context_source": { "$ref": "#/$defs/contextSource" },
+    "warning_codes": {
+      "description": "Small fixed-vocabulary classification of why this result might be untrustworthy (src/analysis/figure/warnings.py), meant for programmatic use (e.g. page_reliability.py) where matching the free-text `warnings` list would be brittle.",
+      "type": "array",
+      "items": {
+        "enum": [
+          "no_caption",
+          "low_ocr_confidence",
+          "context_missing",
+          "grounding_mismatch",
+          "generation_failed",
+          "low_image_quality",
+          "figure_type_uncertain"
+        ]
+      }
+    },
+    "context_used": {
+      "description": "Optional top-level mirror of description.context_used, for callers (e.g. page_reliability.py) that don't need to reach into `description`.",
+      "type": ["boolean", "null"]
+    },
+    "prompt_trace": { "$ref": "#/$defs/promptTrace" },
+    "type_signals": { "$ref": "#/$defs/typeSignals" }
   },
   "allOf": [
     {
@@ -112,6 +150,85 @@
     }
   ],
   "$defs": {
+    "educationContext": {
+      "description": "Nearby textbook context (built by src/analysis/figure/context_builder.py) used to steer an educational, not merely visual, figure description. Named separately from `context` (which links block ids across all three analyzer types and is required/locked) to avoid colliding with that shared shape.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "page_title": { "type": ["string", "null"] },
+        "chapter_title": { "type": ["string", "null"] },
+        "section_title": { "type": ["string", "null"] },
+        "subsection_title": { "type": ["string", "null"] },
+        "nearest_section_title": { "type": ["string", "null"] },
+        "previous_paragraph": { "type": ["string", "null"] },
+        "next_paragraph": { "type": ["string", "null"] },
+        "previous_paragraphs": { "type": "array", "items": { "type": "string" } },
+        "next_paragraphs": { "type": "array", "items": { "type": "string" } },
+        "caption": { "type": ["string", "null"] },
+        "nearby_formula": { "type": ["string", "null"] },
+        "nearby_table": { "type": ["string", "null"] },
+        "figure_ocr": { "type": "array", "items": { "type": "string" } },
+        "page_number": { "type": ["integer", "null"] },
+        "role_hint": { "type": ["string", "null"] }
+      }
+    },
+    "contextSource": {
+      "description": "Block ids behind education_context's fields, for explainability/debugging (src/analysis/figure/context_builder.py's ContextSource).",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "title_block_id": { "type": ["string", "null"] },
+        "section_block_id": { "type": ["string", "null"] },
+        "subsection_block_id": { "type": ["string", "null"] },
+        "caption_block_id": { "type": ["string", "null"] },
+        "nearby_formula_block_id": { "type": ["string", "null"] },
+        "nearby_table_block_id": { "type": ["string", "null"] },
+        "previous_block_ids": { "type": "array", "items": { "type": "string" } },
+        "next_block_ids": { "type": "array", "items": { "type": "string" } },
+        "role_hint_block_id": { "type": ["string", "null"] }
+      }
+    },
+    "promptTrace": {
+      "description": "Which context elements were actually folded into the generation prompt (src/analysis/figure/prompt_builder.py's PromptTrace). The full prompt text itself is not stored.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "use_title": { "type": "boolean" },
+        "use_caption": { "type": "boolean" },
+        "use_previous": { "type": "boolean" },
+        "use_next": { "type": "boolean" },
+        "use_context_window": { "type": "boolean" },
+        "use_role_hint": { "type": "boolean" },
+        "use_ocr": { "type": "boolean" },
+        "use_type_signals": { "type": "boolean" }
+      }
+    },
+    "typeSignals": {
+      "description": "Figure-type-specific structured signals extracted mechanically from OCR text and (for graphs) a cheap visual trend check (src/analysis/figure/type_signals.py). Only present when at least one signal was actually found.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "x_axis": { "type": ["string", "null"] },
+        "y_axis": { "type": ["string", "null"] },
+        "legend": { "type": "array", "items": { "type": "string" } },
+        "trend": { "type": ["string", "null"] },
+        "components": { "type": "array", "items": { "type": "string" } },
+        "relations": { "type": "array", "items": { "type": "string" } },
+        "objects": { "type": "array", "items": { "type": "string" } },
+        "interactions": { "type": "array", "items": { "type": "string" } },
+        "scene": { "type": ["string", "null"] }
+      }
+    },
+    "grounding": {
+      "description": "Similarity breakdown between a generated figure description and its caption/surrounding-paragraph context (src/analysis/figure/grounding.py).",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "caption_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "context_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "overall_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
     "description": {
       "type": "object",
       "additionalProperties": false,
@@ -192,7 +309,7 @@
       "required": ["kind", "figure_type", "title", "x_axis", "y_axis", "series"],
       "properties": {
         "kind": { "const": "figure" },
-        "figure_type": { "enum": ["graph", "table", "mathematical_diagram", "illustration", "photo", "line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "other", "unknown"] },
+        "figure_type": { "enum": ["graph", "table", "mathematical_diagram", "illustration", "photo", "line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "icon", "other", "unknown"] },
         "title": { "type": ["string", "null"] },
         "x_axis": { "$ref": "#/$defs/axis" },
         "y_axis": { "$ref": "#/$defs/axis" },

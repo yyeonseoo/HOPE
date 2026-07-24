@@ -1,10 +1,12 @@
 """Assemble a whole-page accessibility description from block-level results.
 
 The deterministic reading-order draft (see `_build_draft`) is always available
-and requires no model. An optional `PageDescriptionGenerator` (e.g. the
-figure module's `Qwen3VLCaptioner`) can rewrite that draft into a more
+and requires no model. An optional `PageDescriptionGenerator` (any object
+with a `generate_page_description` method) can rewrite that draft into a more
 natural narrative; its output is verified against the draft afterward so it
 can't introduce facts, numbers, or equations that weren't already there.
+No current captioner implements this -- see backend/app.py's `build_page_description`
+call site.
 """
 
 from __future__ import annotations

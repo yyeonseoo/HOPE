@@ -47,15 +47,15 @@ class FigureModelAdapter:
 
 모델이 연결되지 않았거나 유형을 판단하지 못하면 `unknown`과 `partial`을 반환합니다. 이미지 모양이나 파일명만으로 유형과 수치를 추측하는 fallback은 두지 않습니다.
 
-## Hugging Face Caption Pipeline
+## Caption Pipeline
 
 기본 선택형 파이프라인은 다음 구성입니다.
 
-1. OpenCLIP으로 `graph`, `table`, `mathematical_diagram`, `illustration`, `photo` 분류
-2. `Qwen/Qwen3-VL-2B-Instruct`에 유형별 한국어 Prompt를 전달
+1. OpenCLIP(로컬)으로 `graph`, `table`, `mathematical_diagram`, `illustration`, `photo` 분류
+2. OpenAI Chat Completions API(`gpt-4o`)에 유형별 한국어 Prompt와 이미지를 전달
 3. 생성 결과를 공통 레코드의 `description`에 저장
 
-모델 패키지는 선택 의존성입니다. 사용하는 CPU/CUDA 환경에 맞는 PyTorch를 먼저 설치한 뒤 다음을 실행합니다.
+분류·grounding용 패키지는 선택 의존성입니다. 사용하는 CPU/CUDA 환경에 맞는 PyTorch를 먼저 설치한 뒤 다음을 실행합니다.
 
 ```powershell
 python -m pip install -r .\src\analysis\figure\requirements.txt
@@ -64,21 +64,25 @@ python -m pip install -r .\src\analysis\figure\requirements.txt
 Python에서 직접 구성할 수 있습니다.
 
 ```python
-from src.analysis.figure import analyze_figure_blocks, create_huggingface_figure_engine
+from src.analysis.figure import analyze_figure_blocks, create_openai_figure_engine
 
-engine = create_huggingface_figure_engine(device="auto")
+engine = create_openai_figure_engine(device="auto")  # OPENAI_API_KEY 환경 변수 사용
 semantic_analyses = analyze_figure_blocks(page, page_image_path, engine=engine)
 ```
 
-모델은 첫 추론 때 lazy load됩니다. GPU가 없으면 `device="cpu"`로 실행할 수 있지만 Figure 하나당 생성 시간이 길어질 수 있습니다.
+OpenCLIP 분류기와 grounding scorer는 첫 추론 때 lazy load됩니다. GPU가 없으면 `device="cpu"`로 실행할 수 있습니다. 캡션 생성 자체는 OpenAI API 호출이므로 로컬 GPU/CPU와 무관합니다.
 
 웹 화면에서는 왼쪽의 `Figure 설명 생성`을 체크한 뒤 `페이지 분석`을 누릅니다. 완료되면 Figure 탭으로 자동 이동하며 crop, 생성 설명, 모델명, 분류·생성 신뢰도와 생성 시간을 함께 표시합니다.
 
-백엔드 연결은 기본적으로 꺼져 있어 기존 페이지 분석 시 모델을 내려받지 않습니다. 모든 웹 요청에서 항상 활성화하려면 백엔드 실행 전에 환경 변수를 설정합니다.
+백엔드 연결은 기본적으로 꺼져 있습니다. 모든 웹 요청에서 항상 활성화하려면 백엔드 실행 전에 환경 변수를 설정합니다(`OPENAI_API_KEY`도 함께 설정해야 합니다).
 
 ```powershell
 $env:HOPE_FIGURE_CAPTIONING="1"
-$env:HOPE_FIGURE_DEVICE="auto"          # auto, cpu, cuda, cuda:0
+$env:HOPE_FIGURE_DEVICE="auto"          # auto, cpu, cuda, cuda:0 (OpenCLIP/grounding 전용)
+$env:OPENAI_API_KEY="sk-..."
+$env:HOPE_FIGURE_GPT_MODEL="gpt-4o"               # 생략 시 gpt-4o
+$env:HOPE_FIGURE_GPT_TIMEOUT_SECONDS="60"         # 생략 시 60초
+$env:HOPE_FIGURE_GPT_MAX_RETRIES="3"              # 생략 시 3회(OpenAI SDK가 429/5xx/연결 오류에 지수 백오프로 재시도)
 ```
 
 `analysis.confidence`에는 OpenCLIP의 선택 route 확률을, `description.confidence`에는 생성 토큰 확률의 기하평균을 기록합니다. 후자는 보정된 신뢰도가 아닙니다. 실제 생성 시간은 `description.generation_time_seconds`에 초 단위로 저장됩니다.

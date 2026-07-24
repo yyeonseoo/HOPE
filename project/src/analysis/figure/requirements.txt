@@ -1,5 +1,9 @@
-# Optional dependencies for Hugging Face figure routing and caption generation.
+# Optional dependencies for figure routing (OpenCLIP) and topic grounding.
 # Install PyTorch for your CPU/CUDA platform first: https://pytorch.org/get-started/locally/
+# Caption generation itself goes through the OpenAI API (ChatGPTCaptioner /
+# create_openai_figure_engine) -- these packages are not needed for that part,
+# only for the local OpenCLIP figure-type classifier and grounding scorer
+# (and for ChartGemmaCaptioner/Florence2ImageCaptioner, if used directly).
 transformers>=4.56.1,<6.0.0
 open-clip-torch>=2.30.0
 huggingface-hub>=0.26.0,<2.0.0
@@ -10,3 +14,4 @@ hanja==0.15.1
 # pyyaml==6.0.2 and hanja's translate() doesn't actually touch yaml at
 # runtime -- keep this pin so a fresh install doesn't silently downgrade it.
 pyyaml==6.0.2
+openai>=1.0.0

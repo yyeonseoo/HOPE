@@ -14,6 +14,7 @@ FIGURE_TYPES = {
     "graph",
     "table",
     "mathematical_diagram",
+    "icon",
     "other",
     "unknown",
 }

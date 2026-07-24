@@ -7,6 +7,8 @@ from jsonschema import Draft202012Validator
 from PIL import Image
 
 from src.analysis.figure import analyze_figure_blocks
+from src.analysis.figure.captioners import CaptionOutput
+from src.analysis.figure.openclip_classifier import RoutePrediction
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -177,6 +179,136 @@ class FigureAnalyzerTests(unittest.TestCase):
 
         self.assertEqual(result["analysis"]["status"], "failed")
         self.assertIsNone(result["crop_path"])
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+
+class FakeRouteClassifier:
+    model_name = "fake-openclip"
+    model_version = "test-1"
+
+    def __init__(self, route="graph"):
+        self.route = route
+
+    def classify(self, image_path):
+        return RoutePrediction(route=self.route, confidence=0.82, scores={self.route: 0.82}, elapsed_seconds=0.01)
+
+
+class FakePromptCaptioner:
+    model_name = "fake-context-captioner"
+    model_version = "test-2"
+
+    def __init__(self, text="이 그래프는 토끼와 거북이의 경주를 나타낸다."):
+        self.text = text
+        self.calls = []
+
+    def caption_with_prompt(self, image_path, prompt, evidence=None):
+        self.calls.append((image_path, prompt, evidence))
+        return CaptionOutput(
+            text=self.text,
+            confidence=0.88,
+            generation_time_seconds=0.4,
+            model_name=self.model_name,
+            model_version=self.model_version,
+        )
+
+
+class FakeGroundingScorer:
+    def __init__(self, similarity=0.9):
+        self.similarity = similarity
+        self.calls = []
+
+    def score(self, caption, context):
+        self.calls.append((caption, context))
+        return self.similarity if context else None
+
+
+class ContextAwareEngineDouble:
+    """Bundles classifier + captioner + grounding_scorer the way
+    HuggingFaceFigureCaptionEngine does, so analyzer.py's duck-typed
+    detection of the new pipeline picks it up without needing real models."""
+
+    def __init__(self, captioner=None, classifier=None, grounding_scorer=None):
+        self.classifier = classifier or FakeRouteClassifier()
+        self.captioner = captioner or FakePromptCaptioner()
+        self.grounding_scorer = grounding_scorer or FakeGroundingScorer()
+
+
+class ContextAwarePipelineTests(unittest.TestCase):
+    def setUp(self):
+        self.validator = Draft202012Validator(SCHEMA)
+        self.page = {
+            "page_id": 5,
+            "blocks": [
+                {
+                    "block_id": "p5_b1", "type": "paragraph", "bbox": [0, 0, 90, 10],
+                    "text": "토끼와 거북이가 경주를 한다.",
+                },
+                {
+                    "block_id": "p5_b2",
+                    "type": "figure",
+                    "bbox": [10, 10, 90, 70],
+                    "score": 0.91,
+                    "detector": "doclayout_yolo",
+                },
+                {
+                    "block_id": "p5_b3", "type": "caption", "bbox": [10, 72, 90, 78],
+                    "text": "반비례 관계를 나타낸 그래프",
+                },
+            ],
+        }
+
+    def _page_image(self, directory):
+        path = Path(directory) / "page.png"
+        Image.new("RGB", (100, 80), "white").save(path)
+        return path
+
+    def test_engine_with_prompt_capable_captioner_uses_the_new_pipeline(self):
+        engine = ContextAwareEngineDouble()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertEqual(result["figure_type"], "graph")
+        self.assertEqual(result["education_context"]["caption"], "반비례 관계를 나타낸 그래프")
+        self.assertEqual(result["education_context"]["previous_paragraph"], "토끼와 거북이가 경주를 한다.")
+        self.assertIn("grounding", result)
+        self.assertEqual(result["confidence"], 0.88)
+        self.assertEqual(result["description"]["short_text"], engine.captioner.text)
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_prompt_sent_to_captioner_carries_the_built_context(self):
+        engine = ContextAwareEngineDouble()
+        with tempfile.TemporaryDirectory() as tmp:
+            analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)
+
+        prompt = engine.captioner.calls[0][1]
+        self.assertIn("토끼와 거북이가 경주를 한다.", prompt)
+        self.assertIn("반비례 관계를 나타낸 그래프", prompt)
+
+    def test_legacy_engine_without_captioner_attribute_is_unaffected(self):
+        # Same fake as the pre-existing FakeChartEngine tests above: no
+        # `.classifier`/`.captioner`, so this must keep using the old
+        # `engine.analyze(...)` path untouched.
+        engine = FakeChartEngine()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertNotIn("figure_type", result)
+        self.assertNotIn("education_context", result)
+        self.assertNotIn("grounding", result)
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_generation_failure_falls_back_to_legacy_engine_path(self):
+        class ExplodingCaptioner(FakePromptCaptioner):
+            def caption_with_prompt(self, image_path, prompt, evidence=None):
+                raise RuntimeError("model exploded")
+
+        engine = ContextAwareEngineDouble(captioner=ExplodingCaptioner())
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        # ContextAwareEngineDouble itself has no .analyze(), so run_figure_engine's
+        # generic AttributeError path reports failure instead of crashing the page.
+        self.assertEqual(result["analysis"]["status"], "failed")
         self.assertEqual(list(self.validator.iter_errors(result)), [])
 
 

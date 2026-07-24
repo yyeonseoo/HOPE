@@ -5,9 +5,25 @@ from typing import Any, Mapping, Optional, Sequence
 
 from .classifier import metadata_figure_type
 from .context import build_figure_context
+from .context_builder import FigureContext, FigureContextBuilder
 from .crop import crop_and_save_figure_block
 from .engine import FigureUnderstandingEngine, run_figure_engine
+from .generator import FigureDescriptionGenerator
+from .graph_visual import GraphVisualCue, analyze_graph_visual
+from .grounding import TopicGroundingScorer, compute_grounding_scores
 from .normalize import build_figure_analysis
+from .postprocess import build_context_aware_figure_record, split_additive_fields
+from .prompt_builder import FigurePromptBuilder
+from .type_signals import GRAPH_FIGURE_TYPES, TypeSignals, extract_type_signals
+
+# Nearest `window_size` paragraphs before/after the figure, not just the
+# single closest one -- richer context for the educational prompt (see
+# FigureContextBuilder.build's `window_size` parameter).
+_CONTEXT_WINDOW_SIZE = 2
+
+_context_builder = FigureContextBuilder()
+_prompt_builder = FigurePromptBuilder()
+_description_generator = FigureDescriptionGenerator()
 
 
 def analyze_figure_blocks(
@@ -62,7 +78,11 @@ def analyze_figure_block(
     next_id = _neighbor_id(blocks, block_index + 1)
     caption_id = _adjacent_caption_id(blocks, block_index)
     selected_context = build_figure_context(blocks, block_index, semantic_analyses)
+    figure_context = _context_builder.build(
+        blocks, block, page_id=page_id, ocr_lines=ocr_lines, window_size=_CONTEXT_WINDOW_SIZE
+    )
 
+    additive_fields: dict[str, Any] = {}
     if crop_path is None:
         normalized = {
             "analysis": {
@@ -73,6 +93,17 @@ def analyze_figure_block(
             },
             "warnings": ["Page image or a valid figure bbox was not available."],
         }
+    elif _supports_context_aware_pipeline(engine):
+        try:
+            normalized = _run_context_aware_pipeline(engine, crop_path, figure_context, ocr_lines, bbox)
+            additive_fields = split_additive_fields(normalized)
+        except Exception as exc:  # One bad figure must not fail the whole page.
+            evidence = _figure_text_evidence(ocr_lines, bbox)
+            raw = run_figure_engine(engine, crop_path, evidence=evidence, context=selected_context)
+            raw.setdefault("warnings", []).append(
+                f"Context-aware description generation failed and fell back to the legacy engine path: {exc}"
+            )
+            normalized = build_figure_analysis(raw)
     else:
         evidence = _figure_text_evidence(ocr_lines, bbox)
         raw = run_figure_engine(engine, crop_path, evidence=evidence, context=selected_context)
@@ -115,7 +146,77 @@ def analyze_figure_block(
     }
     if "description" in normalized:
         record["description"] = normalized["description"]
+    record.update(additive_fields)
     return record
+
+
+def _supports_context_aware_pipeline(engine: FigureUnderstandingEngine | None) -> bool:
+    """True when `engine` exposes the sub-components (an OpenCLIP-style
+    classifier plus a captioner with `caption_with_prompt`) the context-aware
+    pipeline needs. Engines that don't -- including the minimal test doubles
+    in tests/figure/test_analyzer.py -- keep using the legacy
+    `engine.analyze(...)` path, so their behavior is unchanged."""
+    return (
+        engine is not None
+        and hasattr(engine, "classifier")
+        and hasattr(engine, "captioner")
+        and _description_generator.supports(getattr(engine, "captioner"))
+    )
+
+
+def _run_context_aware_pipeline(
+    engine: FigureUnderstandingEngine,
+    crop_path: str,
+    figure_context: FigureContext,
+    ocr_lines: Sequence[Mapping[str, Any]] | None,
+    bbox: Any,
+) -> dict[str, Any]:
+    """Classify -> extract type-specific signals -> build an educational
+    prompt -> generate -> score grounding -> assemble the schema-conformant
+    + additive record. This is the orchestration the analyzer performs for
+    engines that support it; the heavy lifting lives in context_builder.py,
+    type_signals.py, prompt_builder.py, generator.py, grounding.py, and
+    postprocess.py."""
+    prediction = engine.classifier.classify(crop_path)
+    figure_type = prediction.route
+    evidence = _figure_text_evidence(ocr_lines, bbox)
+    type_signals = extract_type_signals(figure_type, evidence, _graph_visual_cue(figure_type, crop_path))
+    prompt_result = _prompt_builder.build(figure_type, figure_context, type_signals)
+    description = _description_generator.generate(
+        engine.captioner, crop_path, prompt_result.prompt, evidence=evidence
+    )
+    grounding_scorer = getattr(engine, "grounding_scorer", None) or TopicGroundingScorer()
+    grounding_scores = compute_grounding_scores(description.text, figure_context, grounding_scorer)
+    classifier_model = {
+        "name": str(getattr(engine.classifier, "model_name", engine.classifier.__class__.__name__)),
+        "version": getattr(engine.classifier, "model_version", None),
+    }
+    return build_context_aware_figure_record(
+        figure_type=figure_type,
+        classifier_model=classifier_model,
+        classifier_confidence=prediction.confidence,
+        description=description,
+        grounding_scores=grounding_scores,
+        figure_context=figure_context,
+        prompt_trace=prompt_result.trace,
+        type_signals=type_signals,
+        evidence=evidence,
+    )
+
+
+def _graph_visual_cue(figure_type: str, crop_path: str) -> GraphVisualCue | None:
+    """Cheap OpenCV trend check, only run for graph-family figure types --
+    see type_signals.py's `trend` field. Never raises: a bad/unreadable crop
+    just means no trend signal, not a failed analysis."""
+    if figure_type not in GRAPH_FIGURE_TYPES:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(crop_path) as source:
+            return analyze_graph_visual(source)
+    except Exception:
+        return None
 
 
 def _neighbor_id(blocks: list[Mapping[str, Any]], index: int) -> Optional[str]:
