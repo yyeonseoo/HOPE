@@ -16,7 +16,7 @@ from PIL import Image
 # HOPE_FIGURE_CAPTIONING/HOPE_FIGURE_DEVICE in backend/app.py), read fresh on
 # each ChatGPTCaptioner construction so the model, request timeout, and retry
 # budget can change without a code edit.
-_FALLBACK_GPT_MODEL = "gpt-4o"
+_FALLBACK_GPT_MODEL = "gpt-5"
 _FALLBACK_GPT_TIMEOUT_SECONDS = 60.0
 _FALLBACK_GPT_MAX_RETRIES = 3
 

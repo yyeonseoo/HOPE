@@ -52,7 +52,7 @@ class FigureModelAdapter:
 기본 선택형 파이프라인은 다음 구성입니다.
 
 1. OpenCLIP(로컬)으로 `graph`, `table`, `mathematical_diagram`, `illustration`, `photo` 분류
-2. OpenAI Chat Completions API(`gpt-4o`)에 유형별 한국어 Prompt와 이미지를 전달
+2. OpenAI Chat Completions API(`gpt-5`)에 유형별 한국어 Prompt와 이미지를 전달
 3. 생성 결과를 공통 레코드의 `description`에 저장
 
 분류·grounding용 패키지는 선택 의존성입니다. 사용하는 CPU/CUDA 환경에 맞는 PyTorch를 먼저 설치한 뒤 다음을 실행합니다.
@@ -80,7 +80,7 @@ OpenCLIP 분류기와 grounding scorer는 첫 추론 때 lazy load됩니다. GPU
 $env:HOPE_FIGURE_CAPTIONING="1"
 $env:HOPE_FIGURE_DEVICE="auto"          # auto, cpu, cuda, cuda:0 (OpenCLIP/grounding 전용)
 $env:OPENAI_API_KEY="sk-..."
-$env:HOPE_FIGURE_GPT_MODEL="gpt-4o"               # 생략 시 gpt-4o
+$env:HOPE_FIGURE_GPT_MODEL="gpt-5"                # 생략 시 gpt-5
 $env:HOPE_FIGURE_GPT_TIMEOUT_SECONDS="60"         # 생략 시 60초
 $env:HOPE_FIGURE_GPT_MAX_RETRIES="3"              # 생략 시 3회(OpenAI SDK가 429/5xx/연결 오류에 지수 백오프로 재시도)
 ```

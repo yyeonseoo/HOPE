@@ -186,7 +186,7 @@ class HuggingFacePipelineTests(unittest.TestCase):
         engine = create_openai_figure_engine(device="cpu", api_key="test-key")
 
         self.assertIsInstance(engine.captioner, ChatGPTCaptioner)
-        self.assertEqual(engine.captioner.model_name, "gpt-4o")
+        self.assertEqual(engine.captioner.model_name, "gpt-5")
         self.assertEqual(engine.captioner.api_key, "test-key")
         self.assertIsNone(engine.captioner._client)
         self.assertEqual(engine.classifier.device_request, "cpu")

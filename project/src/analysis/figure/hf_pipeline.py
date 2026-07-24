@@ -94,7 +94,7 @@ def create_openai_figure_engine(
     caption generation is delegated to the OpenAI API. `api_key` defaults to
     the `OPENAI_API_KEY` environment variable when omitted, matching the
     OpenAI SDK's own default. `model` defaults to the `HOPE_FIGURE_GPT_MODEL`
-    environment variable (falling back to `gpt-4o`) when omitted -- see
+    environment variable (falling back to `gpt-5`) when omitted -- see
     `ChatGPTCaptioner.__init__`.
     """
     from .openclip_classifier import OpenCLIPFigureTypeClassifier

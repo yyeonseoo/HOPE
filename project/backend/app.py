@@ -54,7 +54,7 @@ def _get_figure_engine(request_enabled: bool):
     if not enabled:
         return None
     device = os.getenv("HOPE_FIGURE_DEVICE", "auto")
-    cache_key = (device, "gpt-4o")
+    cache_key = (device, "gpt-5")
     if cache_key not in _FIGURE_ENGINES:
         _FIGURE_ENGINES[cache_key] = create_openai_figure_engine(device=device)
     return _FIGURE_ENGINES[cache_key]

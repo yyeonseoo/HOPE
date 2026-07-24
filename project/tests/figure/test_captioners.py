@@ -267,16 +267,16 @@ class ChatGPTCaptionerTests(unittest.TestCase):
             output = captioner.caption_with_prompt(self._image(tmp), "이 그림을 설명하세요.")
 
         self.assertEqual(calls["api_key"], "test-key")
-        self.assertEqual(calls["create_kwargs"]["model"], "gpt-4o")
-        self.assertEqual(calls["create_kwargs"]["max_completion_tokens"], 400)
+        self.assertEqual(calls["create_kwargs"]["model"], "gpt-5")
+        self.assertEqual(calls["create_kwargs"]["max_completion_tokens"], 2000)
         self.assertNotIn("max_tokens", calls["create_kwargs"])
-        self.assertEqual(calls["create_kwargs"]["temperature"], 0.0)
+        self.assertNotIn("temperature", calls["create_kwargs"])
         messages = calls["create_kwargs"]["messages"]
         self.assertEqual(messages[0]["content"][0], {"type": "text", "text": "이 그림을 설명하세요."})
         self.assertEqual(messages[0]["content"][1]["type"], "image_url")
         self.assertTrue(messages[0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,"))
         self.assertEqual(output.text, "우상향하는 그래프이다.")
-        self.assertEqual(output.model_name, "gpt-4o-context-aware")
+        self.assertEqual(output.model_name, "gpt-5-context-aware")
 
     def test_client_is_cached_across_calls(self):
         calls = {}
