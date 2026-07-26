@@ -651,11 +651,11 @@ function formatFormulaWarning(warning) {
   return warning;
 }
 
-const USER_FRIENDLY_FORMULA_WARNING = `?? ??? ?????
 
-? ??? ????? ???? ?? ? ?????.
-?? ??? ??? ??? ? ??, ?? ?? ?? ??? ??? ??????.
-?? ?? ?? ?? ?? ?? ??? ??? ??? ????? ??? ???.`;
+
+
+const USER_FRIENDLY_FORMULA_WARNING = "\uc218\uc2dd \ud655\uc778\uc774 \ud544\uc694\ud569\ub2c8\ub2e4\n\n\uc774 \uc218\uc2dd\uc740 \uc774\ubbf8\uc9c0\uc5d0\uc11c \uc790\ub3d9\uc73c\ub85c \uc77d\uc5b4 \uc628 \uacb0\uacfc\uc785\ub2c8\ub2e4.\n\uc77c\ubd80 \uae30\ud638\ub098 \uae00\uc790\uac00 \ube60\uc84c\uc744 \uc218 \uc788\uc5b4, \uc8fc\ubcc0 \uae00\uc790 \uc778\uc2dd \uacb0\uacfc\ub97c \ucc38\uace0\ud574 \ubcf4\uc644\ud588\uc2b5\ub2c8\ub2e4.\n\uc810\uc5ed \ub610\ub294 \uc790\ub8cc \uc81c\uc791 \uc804\uc5d0 \uc6d0\ubcf8 \uc218\uc2dd\uacfc \ubcc0\ud658\ub41c \uc218\uc2dd\uc774 \uc77c\uce58\ud558\ub294\uc9c0 \ud655\uc778\ud574 \uc8fc\uc138\uc694.";
+const FORMULA_WARNING_HEADING = "\uc790\ub3d9 \uac80\uc218 \uacbd\uace0";
 
 function getUserFriendlyWarning(warning) {
   const warningText = String(warning || "");
