@@ -2067,6 +2067,35 @@ select:focus-visible,
   padding: 5px 9px;
 }
 
+.confidence-cell {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.confidence-level {
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.confidence-level.high {
+  background: #e4f5eb;
+  color: #176534;
+}
+
+.confidence-level.medium {
+  background: #fff4de;
+  color: #92650a;
+}
+
+.confidence-level.low {
+  background: #fff0ef;
+  color: #9f2d27;
+}
+
 .review-badge.approved {
   background: #e4f5eb;
   color: #176534;

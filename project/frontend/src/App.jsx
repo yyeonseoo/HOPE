@@ -118,6 +118,20 @@ function Confidence({ value }) {
   return <span>{typeof value === "number" ? value.toFixed(3) : "미제공"}</span>;
 }
 
+// Cutoffs come from the actual detector-score distribution across a sample
+// textbook chapter (17 pages, 83 figure/table/formula blocks): scores cluster
+// into three bands with gaps at ~0.31-0.39 and ~0.72-0.76, so 0.35/0.75 split
+// the bands at their midpoints rather than at round arbitrary numbers.
+function ConfidenceLevel({ value }) {
+  if (typeof value !== "number") return null;
+  const level = value >= 0.75
+    ? { key: "high", label: "높음" }
+    : value >= 0.35
+      ? { key: "medium", label: "보통" }
+      : { key: "low", label: "낮음" };
+  return <span className={`confidence-level ${level.key}`}>{level.label}</span>;
+}
+
 function Seconds({ value }) {
   return <span>{typeof value === "number" ? `${value.toFixed(2)}초` : "미제공"}</span>;
 }
@@ -682,8 +696,11 @@ function AnalysisInspector({ result, type }) {
           <h3>원본 영역</h3>
           <BlockCrop imageUrl={result.page_image} bbox={selected.bbox} alt={`${selected.block_id} 원본 영역`} />
           <div className="metadata-row">
-            <span>탐지 신뢰도</span><Confidence value={selected.detection?.confidence} />
-            <span>분석 신뢰도</span><Confidence value={selected.analysis?.confidence} />
+            <span>탐지 신뢰도</span>
+            <span className="confidence-cell">
+              <Confidence value={selected.detection?.confidence} />
+              <ConfidenceLevel value={selected.detection?.confidence} />
+            </span>
           </div>
         </section>
         <section className="review-section">
