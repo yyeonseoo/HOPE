@@ -688,7 +688,7 @@ function FormulaWarningResult({ warnings, status, type }) {
   return (
     <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
       <div className="text-sm font-semibold text-amber-900">
-        ?? ?? ??
+        {FORMULA_WARNING_HEADING}
       </div>
       <ul className="mt-2 list-disc pl-5 text-sm text-amber-900">
         <li style={{ whiteSpace: "pre-line" }}>
