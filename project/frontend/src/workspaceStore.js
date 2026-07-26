@@ -146,6 +146,48 @@ export async function deleteWorkspacePage(projectId, pageNumber) {
   }
 }
 
+export async function updateWorkspacePageReviewStatus(projectId, pageNumber, reviewStatus) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(PAGE_STORE, "readwrite");
+    const done = transactionDone(transaction);
+    const pages = transaction.objectStore(PAGE_STORE);
+    const id = `${projectId}:${pageNumber}`;
+    const page = await requestResult(pages.get(id));
+    if (!page) throw new Error("저장된 페이지를 찾을 수 없습니다.");
+    const updatedPage = {
+      ...page,
+      reviewStatus,
+      result: {
+        ...page.result,
+        page_description: page.result?.page_description
+          ? { ...page.result.page_description, review_status: reviewStatus }
+          : page.result?.page_description,
+      },
+    };
+    pages.put(updatedPage);
+    await done;
+    return updatedPage;
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteTextbookProject(projectId) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([PROJECT_STORE, PAGE_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(PROJECT_STORE).delete(projectId);
+    const pages = transaction.objectStore(PAGE_STORE);
+    const pageKeys = await requestResult(pages.index("projectId").getAllKeys(IDBKeyRange.only(projectId)));
+    pageKeys.forEach((key) => pages.delete(key));
+    await done;
+  } finally {
+    database.close();
+  }
+}
+
 export function projectFile(project) {
   if (!project?.pdfBlob) return null;
   return new File([project.pdfBlob], project.fileName || project.name || "textbook.pdf", {
