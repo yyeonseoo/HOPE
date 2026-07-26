@@ -30,6 +30,22 @@ def _supports_custom_temperature(model_name: str) -> bool:
     return not model_name.startswith(_TEMPERATURE_UNSUPPORTED_MODEL_PREFIXES)
 
 
+def _supports_minimal_reasoning(model_name: str) -> bool:
+    """Return whether the configured GPT-5 model accepts minimal effort.
+
+    GPT-5 defaults to medium reasoning, which can consume the completion
+    budget before producing visible caption text. Keep this deliberately
+    narrow so future GPT-5 variants with different accepted values are not
+    sent an unsupported parameter.
+    """
+    return bool(
+        re.fullmatch(
+            r"gpt-5(?:-(?:mini|nano))?(?:-\d{4}-\d{2}-\d{2})?",
+            model_name,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class CaptionOutput:
     text: str
@@ -283,24 +299,46 @@ class ChatGPTCaptioner:
     ) -> CaptionOutput:
         client = self._load_client()
         started = time.perf_counter()
-        request: dict[str, Any] = {
-            "model": self.model_name,
-            "max_completion_tokens": self.max_tokens,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
-                ],
-            }],
-        }
-        if _supports_custom_temperature(self.model_name):
-            request["temperature"] = self.temperature
-        response = client.chat.completions.create(**request)
-        elapsed = time.perf_counter() - started
+        image_data_url = _image_data_url(image_path)
+        response = client.chat.completions.create(
+            **self._build_request(prompt, image_data_url)
+        )
         raw_text = (response.choices[0].message.content or "").strip()
         text, claim_warnings = _remove_unsupported_exact_claims(raw_text, evidence)
         text = _postprocess_caption_text(text)
+
+        # A reasoning model can occasionally use its entire completion budget
+        # before emitting visible text. The grounding filter can also remove
+        # every sentence when otherwise useful visual observations share a
+        # sentence with an unsupported exact value. Retry only these failed
+        # cases, asking for a qualitative visual description that can safely
+        # survive grounding.
+        if not text:
+            recovery_prompt = (
+                prompt
+                + "\n\n이전 생성 결과에서 사용할 수 있는 설명이 남지 않았다. "
+                "이번에는 정확한 수식, 좌표, 눈금 숫자를 쓰지 말고 이미지에서 직접 보이는 "
+                "그래프나 도형의 개수, 위치, 형태와 증가·유지·감소 같은 시각적 경향만 "
+                "자연스러운 한국어 1~3문장으로 설명하라."
+            )
+            recovery_response = client.chat.completions.create(
+                **self._build_request(recovery_prompt, image_data_url)
+            )
+            recovery_raw = (
+                recovery_response.choices[0].message.content or ""
+            ).strip()
+            recovery_text, recovery_warnings = _remove_unsupported_exact_claims(
+                recovery_raw,
+                evidence,
+            )
+            recovery_text = _postprocess_caption_text(recovery_text)
+            if recovery_text:
+                text = recovery_text
+                claim_warnings = []
+            else:
+                claim_warnings += recovery_warnings
+
+        elapsed = time.perf_counter() - started
         warnings = [] if text else ["ChatGPT returned an empty caption."]
         warnings += claim_warnings
         warnings += _find_suspicious_caption_content(text)
@@ -312,6 +350,24 @@ class ChatGPTCaptioner:
             model_version=self.model_version,
             warnings=warnings,
         )
+
+    def _build_request(self, prompt: str, image_data_url: str) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "model": self.model_name,
+            "max_completion_tokens": self.max_tokens,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            }],
+        }
+        if _supports_custom_temperature(self.model_name):
+            request["temperature"] = self.temperature
+        if _supports_minimal_reasoning(self.model_name):
+            request["reasoning_effort"] = "minimal"
+        return request
 
     def _load_client(self) -> Any:
         if self._client is not None:

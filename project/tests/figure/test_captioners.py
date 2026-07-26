@@ -249,10 +249,14 @@ class ChatGPTCaptionerTests(unittest.TestCase):
         return path
 
     def _fake_openai_module(self, calls, reply_text):
+        replies = list(reply_text) if isinstance(reply_text, (list, tuple)) else [reply_text]
+
         class FakeCompletions:
             def create(self, **kwargs):
                 calls["create_kwargs"] = kwargs
-                message = SimpleNamespace(content=reply_text)
+                calls.setdefault("create_kwargs_history", []).append(kwargs)
+                reply = replies.pop(0) if len(replies) > 1 else replies[0]
+                message = SimpleNamespace(content=reply)
                 choice = SimpleNamespace(message=message)
                 return SimpleNamespace(choices=[choice])
 
@@ -275,6 +279,7 @@ class ChatGPTCaptionerTests(unittest.TestCase):
         self.assertEqual(calls["api_key"], "test-key")
         self.assertEqual(calls["create_kwargs"]["model"], "gpt-5")
         self.assertEqual(calls["create_kwargs"]["max_completion_tokens"], 2000)
+        self.assertEqual(calls["create_kwargs"]["reasoning_effort"], "minimal")
         self.assertNotIn("max_tokens", calls["create_kwargs"])
         self.assertNotIn("temperature", calls["create_kwargs"])
         messages = calls["create_kwargs"]["messages"]
@@ -375,6 +380,48 @@ class ChatGPTCaptionerTests(unittest.TestCase):
             captioner.caption_with_prompt(self._image(tmp), "설명하세요.")
 
         self.assertNotIn("temperature", calls["create_kwargs"])
+        self.assertEqual(calls["create_kwargs"]["reasoning_effort"], "minimal")
+
+    def test_retries_empty_reasoning_response_with_visual_only_prompt(self):
+        calls = {}
+        captioner = ChatGPTCaptioner(model="gpt-5")
+        replies = ["", "두 개의 곡선이 서로 떨어진 영역에 놓여 있으며 각각 완만하게 휘어진다."]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "sys.modules", {"openai": self._fake_openai_module(calls, replies)}
+        ):
+            output = captioner.caption_with_prompt(self._image(tmp), "설명하세요.")
+
+        self.assertEqual(
+            output.text,
+            "두 개의 곡선이 서로 떨어진 영역에 놓여 있으며 각각 완만하게 휘어진다.",
+        )
+        self.assertEqual(len(calls["create_kwargs_history"]), 2)
+        retry_prompt = calls["create_kwargs_history"][1]["messages"][0]["content"][0]["text"]
+        self.assertIn("정확한 수식, 좌표, 눈금 숫자를 쓰지 말고", retry_prompt)
+        self.assertFalse(output.warnings)
+
+    def test_retries_when_grounding_removes_entire_first_response(self):
+        calls = {}
+        captioner = ChatGPTCaptioner(model="gpt-5")
+        replies = [
+            "그래프는 y=99x를 나타낸다.",
+            "좌표평면에 오른쪽 위로 향하는 직선이 그려져 있다.",
+        ]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "sys.modules", {"openai": self._fake_openai_module(calls, replies)}
+        ):
+            output = captioner.caption_with_prompt(
+                self._image(tmp),
+                "설명하세요.",
+                evidence=[],
+            )
+
+        self.assertEqual(
+            output.text,
+            "좌표평면에 오른쪽 위로 향하는 직선이 그려져 있다.",
+        )
+        self.assertEqual(len(calls["create_kwargs_history"]), 2)
+        self.assertFalse(output.warnings)
 
     def test_reasoning_model_gets_a_larger_default_token_budget(self):
         calls = {}
