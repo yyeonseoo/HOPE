@@ -378,7 +378,7 @@ class TestFormulaAnalyzer(unittest.TestCase):
         inequality_result = generate_formula_description("a>0")
 
         self.assertEqual(inequality_result["status"], "generated")
-        self.assertIn("보다 큽니다", inequality_result["short_text"])
+        self.assertIn("보다 크다", inequality_result["short_text"])
 
         equation_result = generate_formula_description("3+4=7")
 

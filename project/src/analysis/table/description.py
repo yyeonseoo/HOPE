@@ -58,19 +58,18 @@ def generate_table_description(analysis: Dict[str, Any]) -> Dict[str, Any]:
     header_texts = explicit_header_texts or first_row_texts
     used_header_heuristic = not explicit_header_texts and bool(first_row_texts)
 
-    short_text = f"{row_count}행 {column_count}열로 이루어진 표입니다."
+    short_text = f"{row_count}행 {column_count}열로 이루어진 표다."
     if header_texts:
-        short_text += f" 첫 행에는 {', '.join(header_texts)}가 있습니다."
+        short_text += f" 첫 행에는 {', '.join(header_texts)}가 있다."
 
-    long_text_parts = [f"이 표는 {row_count}행 {column_count}열로 구성되어 있습니다."]
-    if header_texts:
-        long_text_parts.append(f"첫 번째 행에는 {', '.join(header_texts)}가 있습니다.")
-
-    sample_row = next((row for row in rows[1:] if any(row)), None)
-    if sample_row:
-        sample_texts = [text for text in sample_row if text]
-        if sample_texts:
-            long_text_parts.append(f"예를 들어 다음 행에는 {', '.join(sample_texts)}가 있습니다.")
+    # List every row's actual content rather than the header plus one
+    # "example" row -- a braille/screen-reader transcription needs the whole
+    # table, not a representative sample of it.
+    long_text_parts = [f"이 표는 {row_count}행 {column_count}열로 구성되어 있다."]
+    for index, row in enumerate(rows, start=1):
+        row_texts = [text for text in row if text]
+        if row_texts:
+            long_text_parts.append(f"{index}행: {', '.join(row_texts)}.")
 
     long_text = " ".join(long_text_parts)
 
@@ -81,10 +80,10 @@ def generate_table_description(analysis: Dict[str, Any]) -> Dict[str, Any]:
     if has_merged_cells:
         transcription_notes = (
             "일부 셀이 여러 행 또는 열에 걸쳐 병합되어 있으므로, "
-            "각 셀을 읽을 때 병합 범위를 함께 안내합니다."
+            "각 셀을 읽을 때 병합 범위를 함께 안내한다."
         )
     else:
-        transcription_notes = "행과 열 순서대로 각 셀의 내용을 점역합니다."
+        transcription_notes = "행과 열 순서대로 각 셀의 내용을 점역한다."
 
     missing_text_cells = [cell for cell in cells if not cell.get("text")]
     review_status = (

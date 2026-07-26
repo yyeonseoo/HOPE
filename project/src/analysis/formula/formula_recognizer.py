@@ -2,6 +2,15 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Shared substring across every "used fallback instead of pix2tex" warning
+# below. These describe which recognizer ran, not whether this block's
+# content is correct -- in an environment where pix2tex isn't installed at
+# all, every single formula block gets one of these regardless of outcome,
+# so callers aggregating warnings across blocks (e.g. page_reliability.py)
+# should not treat this as a per-block correctness signal.
+FALLBACK_RECOGNIZER_WARNING_MARKER = "fallback recognizer was used"
+
+
 def count_formula_parts(latex: Optional[str]) -> int:
     if latex is None:
         return 0
@@ -821,18 +830,18 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
         return {
             "status": "generated",
-            "short_text": f"여러 개의 수식입니다: {readable_parts}",
-            "long_text": f"이 영역에는 {len(parts)}개의 수식이 포함되어 있습니다. {readable_parts}입니다.",
-            "transcription_notes": "여러 수식은 세미콜론으로 구분하여 점역하며, 각 수식의 분자와 분모를 구분해 확인합니다.",
+            "short_text": f"여러 개의 수식이다: {readable_parts}",
+            "long_text": f"이 영역에는 {len(parts)}개의 수식이 포함되어 있다. {readable_parts}이다.",
+            "transcription_notes": "여러 수식은 세미콜론으로 구분하여 점역하며, 각 수식의 분자와 분모를 구분해 확인한다.",
             "review_status": "auto",
         }
 
     if latex.startswith("(") and latex.endswith(")") and "," in latex:
         return {
             "status": "generated",
-            "short_text": f"좌표 또는 순서쌍 {latex}입니다.",
-            "long_text": f"{latex}는 괄호 안에 두 값을 쉼표로 구분하여 나타낸 좌표 또는 순서쌍입니다.",
-            "transcription_notes": "괄호, 쉼표, 각 항을 순서대로 점역합니다.",
+            "short_text": f"좌표 또는 순서쌍 {latex}이다.",
+            "long_text": f"{latex}는 괄호 안에 두 값을 쉼표로 구분하여 나타낸 좌표 또는 순서쌍이다.",
+            "transcription_notes": "괄호, 쉼표, 각 항을 순서대로 점역한다.",
             "review_status": "auto",
         }
     
@@ -847,18 +856,18 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         quotient = arithmetic_division_match.group(3)
         unit = arithmetic_division_match.group(4)
 
-        unit_note = f" 괄호 안의 '{unit}'은 결과 단위로 확인합니다." if unit else ""
+        unit_note = f" 괄호 안의 '{unit}'은 결과 단위로 확인한다." if unit else ""
         unit_text = f" {unit}" if unit else ""
 
         return {
             "status": "generated",
-            "short_text": f"{dividend}을 {divisor}으로 나누면 {quotient}{unit_text}입니다.",
+            "short_text": f"{dividend}을 {divisor}으로 나누면 {quotient}{unit_text}이다.",
             "long_text": (
                 f"이 수식은 {dividend}을 {divisor}으로 나눈 결과가 "
-                f"{quotient}{unit_text}임을 나타냅니다."
+                f"{quotient}{unit_text}임을 나타낸다."
             ),
             "transcription_notes": (
-                "나눗셈 기호와 등호를 구분하여 점역합니다."
+                "나눗셈 기호와 등호를 구분하여 점역한다."
                 f"{unit_note}"
             ),
             "review_status": "auto",
@@ -889,12 +898,12 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
         return {
             "status": "generated",
-            "short_text": f"{left_number}과 {right_number}을 계산하면 {result_number}{unit_text}입니다.",
+            "short_text": f"{left_number}과 {right_number}을 계산하면 {result_number}{unit_text}이다.",
             "long_text": (
                 f"이 수식은 {left_number}에 {right_number}을 {operator_text} "
-                f"{result_number}{unit_text}이 된다는 의미입니다."
+                f"{result_number}{unit_text}이 된다는 의미이다."
             ),
-            "transcription_notes": "연산 기호와 등호를 구분하여 점역하고, 괄호 안 단위가 있으면 결과 단위로 함께 확인합니다.",
+            "transcription_notes": "연산 기호와 등호를 구분하여 점역하고, 괄호 안 단위가 있으면 결과 단위로 함께 확인한다.",
             "review_status": "auto",
         }
 
@@ -909,22 +918,22 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         right_value = inequality_match.group(3)
 
         operator_text_map = {
-            ">": "보다 큽니다",
-            "<": "보다 작습니다",
-            "≤": "보다 작거나 같습니다",
-            "≥": "보다 크거나 같습니다",
+            ">": "보다 크다",
+            "<": "보다 작다",
+            "≤": "보다 작거나 같다",
+            "≥": "보다 크거나 같다",
         }
 
-        operator_text = operator_text_map.get(operator, "비교 관계입니다")
+        operator_text = operator_text_map.get(operator, "비교 관계이다")
 
         return {
             "status": "generated",
             "short_text": f"{left_value}는 {right_value}{operator_text}.",
             "long_text": (
-                f"이 부등식은 {left_value}와 {right_value}의 크기 관계를 나타냅니다. "
+                f"이 부등식은 {left_value}와 {right_value}의 크기 관계를 나타낸다. "
                 f"{left_value}는 {right_value}{operator_text}."
             ),
-            "transcription_notes": "부등호 방향이 의미를 결정하므로 점역 전 부등호 방향을 확인합니다.",
+            "transcription_notes": "부등호 방향이 의미를 결정하므로 점역 전 부등호 방향을 확인한다.",
             "review_status": "auto",
         }
 
@@ -940,23 +949,23 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
         denominator = latex_fraction_match.group(4)
 
         if sign == "-":
-            relation_text = f"{left}와 {denominator}의 곱이 -{numerator}로 일정한 반비례 관계입니다."
+            relation_text = f"{left}와 {denominator}의 곱이 -{numerator}로 일정한 반비례 관계이다."
             long_text = (
-                f"수식은 {left}가 음수 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
-                f"즉, {denominator}의 값이 커질수록 {left}의 절댓값은 작아지는 반비례 관계를 나타냅니다."
+                f"수식은 {left}가 음수 {numerator}를 {denominator}로 나눈 값과 같다는 의미이다. "
+                f"즉, {denominator}의 값이 커질수록 {left}의 절댓값은 작아지는 반비례 관계를 나타낸다."
             )
         else:
-            relation_text = f"{left}와 {denominator}의 곱이 {numerator}로 일정한 반비례 관계입니다."
+            relation_text = f"{left}와 {denominator}의 곱이 {numerator}로 일정한 반비례 관계이다."
             long_text = (
-                f"수식은 {left}가 {numerator}를 {denominator}로 나눈 값과 같다는 의미입니다. "
-                f"즉, {denominator}의 값이 커질수록 {left}의 값은 작아지는 반비례 관계를 나타냅니다."
+                f"수식은 {left}가 {numerator}를 {denominator}로 나눈 값과 같다는 의미이다. "
+                f"즉, {denominator}의 값이 커질수록 {left}의 값은 작아지는 반비례 관계를 나타낸다."
             )
 
         return {
             "status": "generated",
             "short_text": relation_text,
             "long_text": long_text,
-            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역하며, 반비례 관계임을 함께 설명합니다.",
+            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역하며, 반비례 관계임을 함께 설명한다.",
             "review_status": "auto",
         }
     
@@ -969,9 +978,9 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
         return {
             "status": "generated",
-            "short_text": f"{left}는 {numerator}를 {denominator}로 나눈 값입니다.",
-            "long_text": f"수식은 {left}가 {numerator} 나누기 {denominator}와 같다는 의미입니다.",
-            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역합니다.",
+            "short_text": f"{left}는 {numerator}를 {denominator}로 나눈 값이다.",
+            "long_text": f"수식은 {left}가 {numerator} 나누기 {denominator}와 같다는 의미이다.",
+            "transcription_notes": "분수 구조는 분자와 분모를 구분하여 점역한다.",
             "review_status": "auto",
         }
 
@@ -984,31 +993,31 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
         if coefficient in ["", "+"]:
             coefficient_value = "1"
-            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계입니다."
+            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계이다."
             long_text = (
-                f"수식 {latex}는 {left}가 {variable}와 같다는 의미입니다. "
-                f"{variable}의 값이 1 증가하면 {left}도 1만큼 증가합니다."
+                f"수식 {latex}는 {left}가 {variable}와 같다는 의미이다. "
+                f"{variable}의 값이 1 증가하면 {left}도 1만큼 증가한다."
             )
         elif coefficient == "-":
             coefficient_value = "-1"
-            short_text = f"{latex}는 음의 정비례 관계입니다."
+            short_text = f"{latex}는 음의 정비례 관계이다."
             long_text = (
-                f"수식 {latex}는 {left}가 {variable}에 -1을 곱한 값과 같다는 의미입니다. "
-                f"{variable}의 값이 증가하면 {left}의 값은 반대 방향으로 변합니다."
+                f"수식 {latex}는 {left}가 {variable}에 -1을 곱한 값과 같다는 의미이다. "
+                f"{variable}의 값이 증가하면 {left}의 값은 반대 방향으로 변한다."
             )
         else:
             coefficient_value = coefficient
-            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계입니다."
+            short_text = f"{latex}는 {left}와 {variable}가 정비례하는 관계이다."
             long_text = (
-                f"수식 {latex}는 {left}가 {variable}에 {coefficient_value}를 곱한 값과 같다는 의미입니다. "
-                f"{variable}의 값이 1 증가하면 {left}는 {coefficient_value}만큼 변합니다."
+                f"수식 {latex}는 {left}가 {variable}에 {coefficient_value}를 곱한 값과 같다는 의미이다. "
+                f"{variable}의 값이 1 증가하면 {left}는 {coefficient_value}만큼 변한다."
             )
 
         return {
             "status": "generated",
             "short_text": short_text,
             "long_text": long_text,
-            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하고, 계수와 변수의 관계를 함께 설명합니다.",
+            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하고, 계수와 변수의 관계를 함께 설명한다.",
             "review_status": "auto",
         }
     simple_equation_match = re.fullmatch(
@@ -1022,11 +1031,11 @@ def generate_formula_description(latex: Optional[str]) -> Dict[str, str]:
 
         return {
             "status": "generated",
-            "short_text": f"{left_expression}의 값은 {right_expression}입니다.",
+            "short_text": f"{left_expression}의 값은 {right_expression}이다.",
             "long_text": (
                 f"이 수식은 등호를 기준으로 왼쪽 식 {left_expression}과 "
-                f"오른쪽 값 {right_expression}이 같다는 의미입니다."
+                f"오른쪽 값 {right_expression}이 같다는 의미이다."
             ),
-            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하여 점역합니다.",
+            "transcription_notes": "등호를 기준으로 좌변과 우변을 구분하여 점역한다.",
             "review_status": "auto",
         }
