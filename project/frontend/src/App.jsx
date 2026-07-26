@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import "./libraryEnhancements.css";
 import {
+  accessibleHtmlFilename,
+  buildAccessibleTextbookHtml,
+  downloadAccessibleHtml,
+} from "./accessibleHtml";
+import {
   createTextbookProject,
   deleteTextbookProject,
   deleteWorkspacePage,
@@ -1157,6 +1162,45 @@ export default function App() {
     anchor.click(); URL.revokeObjectURL(url);
   }
 
+  function downloadCurrentPageHtml() {
+    if (!result) return;
+    const project = projects.find((item) => item.id === activeProjectId);
+    const title = project ? libraryProjectName(project) : file?.name || "교과서";
+    const html = buildAccessibleTextbookHtml({ title, pages: [result] });
+    downloadAccessibleHtml(
+      html,
+      accessibleHtmlFilename(title, `${String(result.page.page_id).padStart(4, "0")}페이지`),
+    );
+    showToast("현재 페이지의 접근성 HTML을 만들었어요.");
+  }
+
+  function downloadTextbookHtml() {
+    const project = projects.find((item) => item.id === activeProjectId);
+    const title = project ? libraryProjectName(project) : file?.name || "교과서";
+    const pages = savedPages.map((page) => page.result);
+    if (result && resultOwnerId === activeProjectId) {
+      // The HTML builder keeps the last value for a duplicate page number,
+      // so an on-screen edit wins even before the debounced auto-save ends.
+      pages.push(result);
+    }
+    const html = buildAccessibleTextbookHtml({ title, pages });
+    downloadAccessibleHtml(html, accessibleHtmlFilename(title));
+    showToast(`${pages.length}개 페이지를 접근성 HTML로 만들었어요.`);
+  }
+
+  function currentPageHtmlSource() {
+    if (!result) return "";
+    const project = projects.find((item) => item.id === activeProjectId);
+    const title = project ? libraryProjectName(project) : file?.name || "교과서";
+    return buildAccessibleTextbookHtml({
+      title,
+      pages: [result],
+      // A base64 page image makes the source tab unreadable. The downloaded
+      // HTML still embeds it; only the on-screen source view omits it.
+      includePageImages: false,
+    });
+  }
+
   const busy = status === "counting" || status === "analyzing";
   const activeProjects = projects.filter((project) => !libraryMeta[project.id]?.trashed);
   const trashedProjects = projects.filter((project) => libraryMeta[project.id]?.trashed);
@@ -1304,7 +1348,7 @@ export default function App() {
   const tabs = [
     { id: "layout", label: "레이아웃" },
     { id: "elements", label: "요소 분석" },
-    { id: "json", label: "JSON" },
+    { id: "html", label: "HTML" },
     { id: "page", label: "접근성 페이지" },
   ];
 
@@ -2037,6 +2081,15 @@ export default function App() {
               ) : (
                 <p>분석을 완료한 페이지가 여기에 자동 저장됩니다.</p>
               )}
+              {savedPages.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button textbook-html-download"
+                  onClick={downloadTextbookHtml}
+                >
+                  교과서 HTML 다운로드
+                </button>
+              )}
             </section>
             </>
           )}
@@ -2054,7 +2107,12 @@ export default function App() {
                   <div key={type}><span>{type}</span><strong>{count}</strong></div>
                 ))}
               </div>
-              <button className="secondary-button" onClick={downloadJson}>JSON 다운로드</button>
+              <div className="download-actions">
+                <button className="secondary-button" onClick={downloadCurrentPageHtml}>
+                  접근성 HTML 다운로드
+                </button>
+                <button className="secondary-button" onClick={downloadJson}>JSON 다운로드</button>
+              </div>
             </details>
           )}
         </aside>
@@ -2090,7 +2148,15 @@ export default function App() {
               <AnalysisInspector result={result} type={activeElementType} />
             </div>
           ) : (
-            <div className="json-view"><pre>{JSON.stringify({ ...result.page, semantic_analyses: result.semantic_analyses || [], page_description: result.page_description || null }, null, 2)}</pre></div>
+            <div className="html-view">
+              <div className="pane-header">
+                <h2>접근성 HTML</h2>
+                <button type="button" className="html-source-download" onClick={downloadCurrentPageHtml}>
+                  HTML 다운로드
+                </button>
+              </div>
+              <pre><code>{currentPageHtmlSource()}</code></pre>
+            </div>
           )}
         </section>
           </section>

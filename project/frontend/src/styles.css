@@ -1068,6 +1068,10 @@ select:focus-visible,
   margin: 0;
 }
 
+.textbook-html-download {
+  margin-top: 12px;
+}
+
 .saved-page-list {
   display: grid;
   gap: 7px;
@@ -1410,7 +1414,7 @@ select:focus-visible,
   color: #465a55;
 }
 
-.json-view pre,
+.html-view pre,
 .formula-output {
   background: #172522;
   color: #dbe9e4;
@@ -1421,8 +1425,23 @@ select:focus-visible,
   padding: 18px;
 }
 
-.json-view pre {
+.html-view pre {
   max-height: calc(100vh - 175px);
+}
+
+.html-source-download {
+  background: #e5efe2;
+  border: 0;
+  border-radius: 999px;
+  color: #416735;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 7px 12px;
+}
+
+.html-source-download:hover {
+  background: #d8e9d3;
 }
 
 .formula-output {
@@ -2508,7 +2527,7 @@ select:focus-visible,
   }
 
   .layout-view,
-  .json-view,
+  .html-view,
   .inspector {
     min-height: 0;
     overflow: auto;
@@ -2583,6 +2602,21 @@ select:focus-visible,
 .analysis-details > .secondary-button {
   margin: 7px 15px 14px;
   width: calc(100% - 30px);
+}
+
+.download-actions {
+  display: grid;
+  gap: 7px;
+  padding: 7px 15px 14px;
+}
+
+.download-actions .secondary-button:first-child {
+  background: #dfeedd;
+  color: #315b27;
+}
+
+.download-actions .secondary-button:first-child:hover {
+  background: #d2e7ce;
 }
 
 @media (max-width: 1080px) {
@@ -3604,7 +3638,7 @@ textarea:focus-visible,
   box-shadow: inset 3px 0 #6d64d5;
 }
 
-.json-view pre,
+.html-view pre,
 .formula-output {
   background: #252741;
   color: #eef0ff;
