@@ -651,24 +651,54 @@ function formatFormulaWarning(warning) {
   return warning;
 }
 
-function FormulaWarningResult({ warnings }) {
-  if (!warnings || warnings.length === 0) {
+const USER_FRIENDLY_FORMULA_WARNING = `?? ??? ?????
+
+? ??? ????? ???? ?? ? ?????.
+?? ??? ??? ??? ? ??, ?? ?? ?? ??? ??? ??????.
+?? ?? ?? ?? ?? ?? ??? ??? ??? ????? ??? ???.`;
+
+function getUserFriendlyWarning(warning) {
+  const warningText = String(warning || "");
+
+  if (
+    warningText.includes("pix2tex") ||
+    warningText.includes("OCR") ||
+    warningText.includes("fewer formula parts") ||
+    warningText.includes("rejected as unreliable") ||
+    warningText.includes("unavailable or failed") ||
+    warningText.includes("Detected formula block does not contain") ||
+    warningText.includes("Formula LaTeX could not be recognized") ||
+    warningText.includes("Formula text was not available")
+  ) {
+    return USER_FRIENDLY_FORMULA_WARNING;
+  }
+
+  return warningText;
+}
+
+
+function FormulaWarningResult({ warnings, status, type }) {
+  const normalizedStatus = String(status || "").toLowerCase();
+  const shouldShowWarning = type === "formula" && normalizedStatus && normalizedStatus !== "success";
+
+  if (!shouldShowWarning || !warnings || warnings.length === 0) {
     return null;
   }
 
   return (
     <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
       <div className="text-sm font-semibold text-amber-900">
-        자동 검수 경고
+        ?? ?? ??
       </div>
       <ul className="mt-2 list-disc pl-5 text-sm text-amber-900">
-        {warnings.map((warning, index) => (
-          <li key={index}>{formatFormulaWarning(warning)}</li>
-        ))}
+        <li style={{ whiteSpace: "pre-line" }}>
+          {USER_FRIENDLY_FORMULA_WARNING}
+        </li>
       </ul>
     </div>
   );
 }
+
 
 function AnalysisInspector({ result, type }) {
   const entries = useMemo(() => analysisEntries(result).filter((item) => item.type === type), [result, type]);
@@ -711,7 +741,7 @@ function AnalysisInspector({ result, type }) {
           <h3>접근성 설명</h3>
           <DescriptionResult description={selected.description} captioningEnabled={result.figure_captioning_enabled} type={type} />
         </section>
-        <FormulaWarningResult warnings={selected.warnings} type={type} />
+        <FormulaWarningResult warnings={selected.warnings} status={selected.analysis?.status} type={type} />
       </div>
     </div>
   );
