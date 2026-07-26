@@ -584,7 +584,7 @@ function PageDescriptionView({ result, onUpdateDescription }) {
           )}
           <div className="review-footer">
             <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
-            <span>{description.was_generated ? "모델 다듬기 적용" : "블록 원문 이어붙임"}</span>
+            {description.was_generated && <span>모델 다듬기 적용</span>}
           </div>
           {description.warnings?.length > 0 && (
             <ul className="page-warning-list">
