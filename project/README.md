@@ -1,6 +1,6 @@
 # Economics Math Textbook Layout Parser
 
-경제수학 교과서 PDF에서 원하는 페이지를 분석하고, 문서 요소를 bounding box 단위의 JSON으로 반환하는 MVP입니다. React 웹 화면에서 PDF와 페이지 번호를 선택하면 원본 페이지, 탐지 시각화, JSON을 함께 확인할 수 있습니다.
+교과서 PDF에서 원하는 페이지를 분석하고, 문서 요소를 bounding box 단위의 JSON으로 반환하는 MVP입니다. React 웹 화면에서 PDF와 페이지 번호를 선택하면 원본 페이지, 탐지 시각화, JSON을 함께 확인할 수 있습니다.
 
 ## Current Pipeline
 
