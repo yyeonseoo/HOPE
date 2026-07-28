@@ -727,7 +727,7 @@ function AnalysisInspector({ result, type }) {
         ))}
       </div>
       <div className="review-detail">
-        <section className="review-section">
+        <section className="review-section review-source-section">
           <h3>원본 영역</h3>
           <BlockCrop imageUrl={result.page_image} bbox={selected.bbox} alt={`${selected.block_id} 원본 영역`} />
           <div className="metadata-row">
@@ -738,11 +738,11 @@ function AnalysisInspector({ result, type }) {
             </span>
           </div>
         </section>
-        <section className="review-section">
+        <section className="review-section review-structure-section">
           <h3>구조화 결과</h3>
           <SemanticResult entry={selected} />
         </section>
-        <section className="review-section">
+        <section className="review-section review-description-section">
           <h3>접근성 설명</h3>
           <DescriptionResult description={selected.description} captioningEnabled={result.figure_captioning_enabled} type={type} />
         </section>
@@ -884,8 +884,19 @@ export default function App() {
   ));
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [openBookSettings, setOpenBookSettings] = useState(null);
+  const [resultFullscreen, setResultFullscreen] = useState(false);
   const toastTimerRef = useRef(null);
   const projectFileInputRef = useRef(null);
+  const resultWorkspaceRef = useRef(null);
+
+  useEffect(() => {
+    function syncFullscreenState() {
+      setResultFullscreen(document.fullscreenElement === resultWorkspaceRef.current);
+    }
+
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
 
   useEffect(() => {
     if (!openBookSettings) return undefined;
@@ -896,6 +907,18 @@ export default function App() {
     document.addEventListener("pointerdown", closeSettingsOutside);
     return () => document.removeEventListener("pointerdown", closeSettingsOutside);
   }, [openBookSettings]);
+
+  async function toggleResultFullscreen() {
+    try {
+      if (document.fullscreenElement === resultWorkspaceRef.current) {
+        await document.exitFullscreen();
+        return;
+      }
+      await resultWorkspaceRef.current?.requestFullscreen();
+    } catch {
+      setError("전체화면 보기를 시작하지 못했습니다. 브라우저 설정을 확인해 주세요.");
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -2116,8 +2139,39 @@ export default function App() {
             </details>
           )}
         </aside>
-        <section className={`result-workspace ${activeView === "page" ? "page-workspace" : ""}`}>
-          <nav className="view-tabs" aria-label="결과 보기">{tabs.map((tab) => <button key={tab.id} className={activeView === tab.id ? "active" : ""} onClick={() => setActiveView(tab.id)}>{tab.label}</button>)}</nav>
+        <section
+          ref={resultWorkspaceRef}
+          className={`result-workspace ${activeView === "page" ? "page-workspace" : ""}`}
+        >
+          <nav className="view-tabs" aria-label="결과 보기">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={`${activeView === tab.id ? "active" : ""} ${tab.id === "page" ? "page-view-tab" : ""}`.trim()}
+                onClick={() => setActiveView(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+            {result && (
+              <button
+                type="button"
+                className="fullscreen-toggle"
+                onClick={toggleResultFullscreen}
+                aria-pressed={resultFullscreen}
+                title={resultFullscreen ? "전체화면 종료" : "전체화면 보기"}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  {resultFullscreen ? (
+                    <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+                  ) : (
+                    <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+                  )}
+                </svg>
+                <span>{resultFullscreen ? "전체화면 종료" : "전체화면"}</span>
+              </button>
+            )}
+          </nav>
           {busy ? <ProcessingState status={status} elapsedSeconds={elapsedSeconds} /> : !result ? (
             <div className="empty-state result-empty">
               <div className="empty-illustration" aria-hidden="true"><span /><span /><span /></div>
