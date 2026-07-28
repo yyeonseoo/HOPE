@@ -11,8 +11,11 @@ from typing import Optional
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / ".env", override=False)
+
 SRC_DIR = ROOT_DIR / "src"
 for _path in (ROOT_DIR, SRC_DIR):
     if str(_path) not in sys.path:

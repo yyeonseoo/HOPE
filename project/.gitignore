@@ -18,3 +18,8 @@ frontend/.vite/
 
 *.crop.tmp.png
 *.log
+
+# Local secrets
+.env
+.env.*
+!.env.example
