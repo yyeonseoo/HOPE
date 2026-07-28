@@ -233,7 +233,6 @@ function DescriptionResult({ description, captioningEnabled, type }) {
       {type === "figure" && (
         <dl className="description-metrics">
           <div><dt>생성 모델</dt><dd>{description.model?.name || "미제공"}</dd></div>
-          <div><dt>생성 신뢰도</dt><dd><Confidence value={description.confidence} /></dd></div>
           <div><dt>생성 시간</dt><dd><Seconds value={description.generation_time_seconds} /></dd></div>
         </dl>
       )}
@@ -739,7 +738,6 @@ function AnalysisInspector({ result, type }) {
           <SemanticResult entry={selected} />
         </section>
         <section className="review-section review-description-section">
-          <h3>접근성 설명</h3>
           <DescriptionResult description={selected.description} captioningEnabled={result.figure_captioning_enabled} type={type} />
         </section>
         <FormulaWarningResult warnings={selected.warnings} status={selected.analysis?.status} type={type} />
