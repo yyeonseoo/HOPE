@@ -146,7 +146,12 @@ export async function deleteWorkspacePage(projectId, pageNumber) {
   }
 }
 
-export async function updateWorkspacePageReviewStatus(projectId, pageNumber, reviewStatus) {
+export async function updateWorkspacePageReviewStatus(
+  projectId,
+  pageNumber,
+  reviewStatus,
+  reviewer = "검수자 미기재",
+) {
   const database = await openDatabase();
   try {
     const transaction = database.transaction(PAGE_STORE, "readwrite");
@@ -155,14 +160,33 @@ export async function updateWorkspacePageReviewStatus(projectId, pageNumber, rev
     const id = `${projectId}:${pageNumber}`;
     const page = await requestResult(pages.get(id));
     if (!page) throw new Error("저장된 페이지를 찾을 수 없습니다.");
+    const reviewedAt = new Date().toISOString();
+    const previousDescription = page.result?.page_description;
+    const previousReview = previousDescription?.review || {};
+    const updatedDescription = previousDescription
+      ? {
+          ...previousDescription,
+          review_status: reviewStatus,
+          review: {
+            ...previousReview,
+            reviewer,
+            reviewed_at: reviewStatus === "reviewed"
+              ? reviewedAt
+              : previousReview.reviewed_at || null,
+            reopened_at: reviewStatus === "needs_review" ? reviewedAt : null,
+            history: [
+              ...(previousReview.history || []),
+              { status: reviewStatus, reviewer, at: reviewedAt },
+            ],
+          },
+        }
+      : previousDescription;
     const updatedPage = {
       ...page,
       reviewStatus,
       result: {
         ...page.result,
-        page_description: page.result?.page_description
-          ? { ...page.result.page_description, review_status: reviewStatus }
-          : page.result?.page_description,
+        page_description: updatedDescription,
       },
     };
     pages.put(updatedPage);

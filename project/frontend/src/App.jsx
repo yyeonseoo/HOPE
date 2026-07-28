@@ -7,6 +7,12 @@ import {
   downloadAccessibleHtml,
 } from "./accessibleHtml";
 import {
+  moveBrailleReadingGroup,
+  placeBrailleReadingGroup,
+  reorderTaggedPageDescription,
+  sortBlocksForBrailleReading,
+} from "./brailleReadingOrder";
+import {
   createTextbookProject,
   deleteTextbookProject,
   deleteWorkspacePage,
@@ -94,6 +100,39 @@ function analysisEntries(result) {
         warnings: [],
       };
     });
+}
+
+function changeTaggedDescriptionLine(text, blocks, blockId, nextType = null) {
+  const orderedBlocks = sortBlocksForBrailleReading(blocks || []);
+  const block = orderedBlocks.find((item) => item.block_id === blockId);
+  if (!block) return text;
+  const sameTypeIndex = orderedBlocks
+    .filter((item) => item.type === block.type)
+    .findIndex((item) => item.block_id === blockId);
+  if (sameTypeIndex < 0) return text;
+
+  const lines = String(text || "").split(/\r?\n/);
+  let currentIndex = -1;
+  const lineIndex = lines.findIndex((line) => {
+    const match = line.match(/^\s*\[([a-z_]+)\]/i);
+    if (match?.[1]?.toLowerCase() !== block.type) return false;
+    currentIndex += 1;
+    return currentIndex === sameTypeIndex;
+  });
+  if (lineIndex < 0) return text;
+  if (!nextType) lines.splice(lineIndex, 1);
+  else lines[lineIndex] = lines[lineIndex].replace(
+    /^(\s*)\[([a-z_]+)\]/i,
+    `$1[${nextType}]`,
+  );
+  return lines.join("\n");
+}
+
+function taggedLineSignature(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*\[([a-z_]+)\]/i)?.[1]?.toLowerCase() || null)
+    .filter(Boolean);
 }
 
 function BlockCrop({ imageUrl, bbox, alt }) {
@@ -249,11 +288,18 @@ function PageSourceViewer({
   onClearFigure,
   selectedBlock,
   onSelectBlock,
+  onUpdateBlock,
+  onAddFigure,
+  onDeleteBlock,
 }) {
   const [imageSize, setImageSize] = useState(null);
   const [magnifierEnabled, setMagnifierEnabled] = useState(false);
   const [magnifier, setMagnifier] = useState(null);
   const [pageZoom, setPageZoom] = useState(100);
+  const [structureEditing, setStructureEditing] = useState(false);
+  const [structureBlock, setStructureBlock] = useState(null);
+  const [draftRegion, setDraftRegion] = useState(null);
+  const [redrawingBlock, setRedrawingBlock] = useState(false);
   const bbox = selectedFigure?.bbox;
   const magnifierWidth = 300;
   const magnifierHeight = 210;
@@ -272,7 +318,19 @@ function PageSourceViewer({
     setMagnifier(null);
     setMagnifierEnabled(false);
     setPageZoom(100);
+    setStructureEditing(false);
+    setStructureBlock(null);
+    setDraftRegion(null);
+    setRedrawingBlock(false);
   }, [result.page_image]);
+
+  useEffect(() => {
+    if (!structureBlock) return;
+    const refreshed = result.page?.blocks?.find(
+      (block) => block.block_id === structureBlock.block_id,
+    );
+    setStructureBlock(refreshed || null);
+  }, [result.page?.blocks, structureBlock?.block_id]);
 
   function updateMagnifier(event) {
     if (!magnifierEnabled) return;
@@ -301,12 +359,59 @@ function PageSourceViewer({
     setMagnifier(null);
   }
 
+  function imagePoint(event) {
+    if (!imageSize) return null;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(
+        imageSize.width,
+        ((event.clientX - bounds.left) / bounds.width) * imageSize.width,
+      )),
+      y: Math.max(0, Math.min(
+        imageSize.height,
+        ((event.clientY - bounds.top) / bounds.height) * imageSize.height,
+      )),
+    };
+  }
+
+  function normalizedDraftBbox() {
+    if (!draftRegion) return null;
+    const x1 = Math.round(Math.min(draftRegion.start.x, draftRegion.end.x));
+    const y1 = Math.round(Math.min(draftRegion.start.y, draftRegion.end.y));
+    const x2 = Math.round(Math.max(draftRegion.start.x, draftRegion.end.x));
+    const y2 = Math.round(Math.max(draftRegion.start.y, draftRegion.end.y));
+    return x2 - x1 >= 8 && y2 - y1 >= 8 ? [x1, y1, x2, y2] : null;
+  }
+
+  const draftBbox = normalizedDraftBbox();
+  const draftStyle = draftBbox && imageSize ? {
+    left: `${(draftBbox[0] / imageSize.width) * 100}%`,
+    top: `${(draftBbox[1] / imageSize.height) * 100}%`,
+    width: `${((draftBbox[2] - draftBbox[0]) / imageSize.width) * 100}%`,
+    height: `${((draftBbox[3] - draftBbox[1]) / imageSize.height) * 100}%`,
+  } : null;
+
   return (
     <section className="page-source-pane">
       <div className="page-review-heading">
         <div><span>원본 교과서</span><h3>{result.page?.page_id}페이지</h3></div>
         <div className="page-actions">
           {selectedFigure && <button className="text-button" onClick={onClearFigure}>전체 페이지 보기</button>}
+          <button
+            type="button"
+            className={`structure-edit-toggle ${structureEditing ? "active" : ""}`}
+            aria-pressed={structureEditing}
+            onClick={() => {
+              setStructureEditing((current) => !current);
+              setStructureBlock(null);
+              setDraftRegion(null);
+              setRedrawingBlock(false);
+              setMagnifierEnabled(false);
+              setMagnifier(null);
+            }}
+          >
+            {structureEditing ? "구조 수정 종료" : "구조 수정"}
+          </button>
           <div className="page-zoom-controls" aria-label="교과서 페이지 확대 및 축소">
             <button
               type="button"
@@ -349,8 +454,31 @@ function PageSourceViewer({
       </div>
       <div className={`page-image-stage ${pageZoom > 100 ? "page-zoomed" : ""}`}>
         <div
-          className={`page-image-wrap ${magnifierEnabled ? "magnifier-active" : ""}`}
+          className={[
+            "page-image-wrap",
+            magnifierEnabled ? "magnifier-active" : "",
+            structureEditing ? "structure-editing" : "",
+          ].filter(Boolean).join(" ")}
           style={{ transform: `scale(${pageZoom / 100})` }}
+          onPointerDown={(event) => {
+            if (!structureEditing || event.target.closest(".page-edit-region")) return;
+            const point = imagePoint(event);
+            if (!point) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDraftRegion({ start: point, end: point });
+            if (!redrawingBlock) setStructureBlock(null);
+          }}
+          onPointerMove={(event) => {
+            if (!structureEditing || !draftRegion) return;
+            const point = imagePoint(event);
+            if (point) setDraftRegion((current) => ({ ...current, end: point }));
+          }}
+          onPointerUp={(event) => {
+            if (!structureEditing || !draftRegion) return;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          }}
         >
           <img
             src={result.page_image}
@@ -367,7 +495,12 @@ function PageSourceViewer({
           {!magnifierEnabled && editableBlocks.map((block) => (
             <button
               type="button"
-              className={`page-edit-region ${selectedBlock?.block_id === block.block_id ? "active" : ""}`}
+              className={[
+                "page-edit-region",
+                selectedBlock?.block_id === block.block_id ? "active" : "",
+                structureEditing ? "structure-visible" : "",
+                structureBlock?.block_id === block.block_id ? "structure-selected" : "",
+              ].filter(Boolean).join(" ")}
               key={block.block_id}
               style={{
                 left: `${(block.bbox[0] / imageSize.width) * 100}%`,
@@ -377,12 +510,23 @@ function PageSourceViewer({
               }}
               onClick={(event) => {
                 event.stopPropagation();
-                onSelectBlock(block);
+                if (structureEditing) {
+                  setStructureBlock(block);
+                  setDraftRegion(null);
+                  setRedrawingBlock(false);
+                } else {
+                  onSelectBlock(block);
+                }
               }}
-              aria-label="설명 수정"
-              title="설명 수정"
-            />
+              aria-label={structureEditing ? `${block.type} 구조 선택` : "설명 수정"}
+              title={structureEditing ? `${block.type} · ${block.block_id}` : "설명 수정"}
+            >
+              {structureEditing && <span>{block.type}</span>}
+            </button>
           ))}
+          {structureEditing && draftStyle && (
+            <span className="structure-draft-region" style={draftStyle} aria-hidden="true" />
+          )}
           {magnifierEnabled && magnifier && (
             <span
               className="page-magnifier"
@@ -399,6 +543,99 @@ function PageSourceViewer({
             />
           )}
         </div>
+        {structureEditing && (
+          <div className="structure-editor-panel">
+            <div>
+              <strong>구조 수정</strong>
+              <span>
+                {structureBlock
+                  ? `${structureBlock.block_id} 영역을 선택했습니다.`
+                  : draftBbox
+                    ? "새 영역을 그렸습니다."
+                    : redrawingBlock
+                      ? "선택한 블록의 새 범위를 드래그하세요."
+                      : "영역을 클릭하거나 빈 곳을 드래그하세요."}
+              </span>
+            </div>
+            {structureBlock && (
+              <>
+                <label>
+                  <span>블록 유형</span>
+                  <select
+                    value={structureBlock.type}
+                    onChange={(event) => onUpdateBlock(
+                      structureBlock.block_id,
+                      { type: event.target.value },
+                    )}
+                  >
+                    {[
+                      "title", "section_title", "paragraph", "formula",
+                      "table", "figure", "caption", "footer", "page_number",
+                    ].map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                {!draftBbox && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftRegion(null);
+                      setRedrawingBlock(true);
+                    }}
+                  >
+                    영역 다시 그리기
+                  </button>
+                )}
+                {draftBbox && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateBlock(structureBlock.block_id, { bbox: draftBbox });
+                      setDraftRegion(null);
+                      setRedrawingBlock(false);
+                    }}
+                  >
+                    그린 범위로 영역 변경
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    if (!window.confirm("선택한 블록을 오탐으로 삭제할까요?")) return;
+                    onDeleteBlock(structureBlock.block_id);
+                    setStructureBlock(null);
+                    setRedrawingBlock(false);
+                  }}
+                >
+                  오탐 블록 삭제
+                </button>
+              </>
+            )}
+            {draftBbox && !structureBlock && (
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  onAddFigure(draftBbox);
+                  setDraftRegion(null);
+                }}
+              >
+                누락 Figure 추가
+              </button>
+            )}
+            {draftRegion && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftRegion(null);
+                  setRedrawingBlock(false);
+                }}
+              >
+                선택 취소
+              </button>
+            )}
+          </div>
+        )}
         {selectedFigure && (
           <div className="figure-popover" role="dialog" aria-label="선택한 Figure 원본">
             <div className="figure-popover-header">
@@ -417,26 +654,194 @@ function PageSourceViewer({
   );
 }
 
-function LinkedPageDescription({ text, figures, onSelectFigure, selectedFigure }) {
-  let figureIndex = 0;
-  return String(text || "").split(/(\[figure\])/gi).map((segment, index) => {
-    if (!/^\[figure\]$/i.test(segment)) return <span key={index}>{segment}</span>;
-    const figure = figures[figureIndex++];
-    if (!figure) return <span key={index} className="block-token">Figure</span>;
-    return (
+function LinkedPageDescription({
+  text,
+  blocks,
+  semanticAnalyses,
+  onMoveBlock,
+  onUpdateFigureTreatment,
+  onSelectFigure,
+  selectedFigure,
+}) {
+  const [draggedBlockId, setDraggedBlockId] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const orderedBlocks = useMemo(
+    () => sortBlocksForBrailleReading(blocks || []),
+    [blocks],
+  );
+  const analysesByBlockId = useMemo(
+    () => new Map((semanticAnalyses || []).map((item) => [item.block_id, item])),
+    [semanticAnalyses],
+  );
+  const blocksByType = new Map();
+  orderedBlocks.forEach((block) => {
+    if (!blocksByType.has(block.type)) blocksByType.set(block.type, []);
+    blocksByType.get(block.type).push(block);
+  });
+  const typeOffsets = new Map();
+
+  return String(text || "").split(/\r?\n/).map((line, index) => {
+    const taggedMatch = line.match(/^\s*\[([a-z_]+)\]\s*(.*)$/i);
+    if (!taggedMatch) {
+      return <span key={index} className="page-description-line">{line}</span>;
+    }
+    const type = taggedMatch[1].toLowerCase();
+    if (type === "transcriber_note") {
+      return (
+        <div key={`manual-note-${index}`} className="manual-note-line">
+          <span className="inline-transcriber-note-toggle static">
+            <span aria-hidden="true">✓</span> 점역자 주
+          </span>
+          <span>{taggedMatch[2] || "점역자 주 내용을 작성해 주세요."}</span>
+        </div>
+      );
+    }
+    const typeOffset = typeOffsets.get(type) || 0;
+    const block = blocksByType.get(type)?.[typeOffset];
+    typeOffsets.set(type, typeOffset + 1);
+    if (!block) {
+      return <span key={index} className="page-description-line">{line}</span>;
+    }
+
+    const movable = type !== "caption" && type !== "page_number";
+    const moveHandle = movable && (
       <button
-        key={index}
-        className={`figure-reference ${selectedFigure?.block_id === figure.block_id ? "active" : ""}`}
-        onClick={() => onSelectFigure(figure)}
-        title={`${figure.block_id} 원본 보기`}
+        type="button"
+        className="description-drag-handle"
+        draggable
+        aria-label={`${type} 블록 순서 이동`}
+        title="끌어서 순서 이동 · Alt+위/아래 화살표로 이동"
+        onDragStart={(event) => {
+          setDraggedBlockId(block.block_id);
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", block.block_id);
+        }}
+        onDragEnd={() => {
+          setDraggedBlockId(null);
+          setDropTarget(null);
+        }}
+        onKeyDown={(event) => {
+          if (!event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+          event.preventDefault();
+          onMoveBlock(block.block_id, event.key === "ArrowUp" ? "up" : "down");
+        }}
       >
-        <span aria-hidden="true">▧</span> Figure 원본 보기
+        <span aria-hidden="true">⠿</span>
       </button>
+    );
+    const rowProps = {
+      className: [
+        "draggable-description-block",
+        draggedBlockId === block.block_id ? "dragging" : "",
+        dropTarget?.blockId === block.block_id
+          ? `drop-${dropTarget.position}`
+          : "",
+      ].filter(Boolean).join(" "),
+      onDragOver: (event) => {
+        if (!movable || !draggedBlockId) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const position = event.clientY < bounds.top + bounds.height / 2
+          ? "before"
+          : "after";
+        if (
+          dropTarget?.blockId !== block.block_id
+          || dropTarget?.position !== position
+        ) {
+          setDropTarget({ blockId: block.block_id, position });
+        }
+      },
+      onDragLeave: (event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setDropTarget((current) => (
+            current?.blockId === block.block_id ? null : current
+          ));
+        }
+      },
+      onDrop: (event) => {
+        event.preventDefault();
+        const sourceId = draggedBlockId || event.dataTransfer.getData("text/plain");
+        if (sourceId && sourceId !== block.block_id) {
+          onMoveBlock(
+            sourceId,
+            dropTarget?.position === "after" ? "place_after" : "place",
+            block.block_id,
+          );
+        }
+        setDraggedBlockId(null);
+        setDropTarget(null);
+      },
+    };
+
+    if (type !== "figure") {
+      return (
+        <div key={block.block_id || index} {...rowProps}>
+          {moveHandle}
+          <span className="page-description-line">{line}</span>
+        </div>
+      );
+    }
+
+    const generatedText = taggedMatch[2] || "";
+    const noteText = String(generatedText).trim();
+    const figureAnalysis = analysesByBlockId.get(block.block_id);
+    const visualTreatment = (
+      figureAnalysis?.braille_review?.visual_treatment
+      || figureAnalysis?.braille_review?.production_mode
+      || "transcriber_note"
+    );
+    const isTactileGraphic = visualTreatment === "tactile_graphic";
+    return (
+      <div key={block.block_id || index} {...rowProps}>
+        {moveHandle}
+        <div className={`figure-description-inline ${isTactileGraphic ? "is-tactile-graphic" : "is-transcriber-note"}`}>
+          <div className="figure-description-meta">
+            <button
+              type="button"
+              className={`inline-visual-treatment-toggle ${isTactileGraphic ? "tactile" : "note"}`}
+              aria-pressed={isTactileGraphic}
+              title={isTactileGraphic
+                ? "점역자 주 방식으로 변경"
+                : "촉각 그래픽 제작 대상으로 변경"}
+              onClick={() => onUpdateFigureTreatment(
+                block.block_id,
+                isTactileGraphic ? "transcriber_note" : "tactile_graphic",
+              )}
+            >
+              <span aria-hidden="true">{isTactileGraphic ? "▧" : "✓"}</span>
+              {isTactileGraphic ? "촉각 그래픽 제작 대상" : "점역자 주"}
+            </button>
+            <span className="figure-tag">[figure]</span>
+          </div>
+          <div className="figure-description-content">
+            <span className="figure-description-copy">
+              {noteText || "Figure 설명을 작성해 주세요."}
+            </span>
+            <button
+              className={`figure-reference inline ${selectedFigure?.block_id === block.block_id ? "active" : ""}`}
+              onClick={() => onSelectFigure(block)}
+              title={`${block.block_id} 원본 보기`}
+            >
+              <span aria-hidden="true">▧</span> 원본 보기
+            </button>
+          </div>
+        </div>
+      </div>
     );
   });
 }
 
-function PageDescriptionView({ result, onUpdateDescription }) {
+function PageDescriptionView({
+  result,
+  onUpdateDescription,
+  onMoveBlock,
+  onUpdateFigureTreatment,
+  onUpdateReview,
+  onUpdateBlock,
+  onAddFigure,
+  onDeleteBlock,
+}) {
   const description = result.page_description;
   const [selectedFigure, setSelectedFigure] = useState(null);
   const [selectedBlock, setSelectedBlock] = useState(null);
@@ -444,18 +849,21 @@ function PageDescriptionView({ result, onUpdateDescription }) {
   const [draft, setDraft] = useState(description?.text || "");
   const [cursorCueVisible, setCursorCueVisible] = useState(false);
   const [cursorCueTop, setCursorCueTop] = useState(0);
+  const [tagEditWarning, setTagEditWarning] = useState(false);
+  const [reviewerName, setReviewerName] = useState(
+    description?.review?.reviewer || loadLocalValue("hope-reviewer-name", ""),
+  );
   const editorRef = useRef(null);
   const cursorCueTimerRef = useRef(null);
-  const figureBlocks = useMemo(
-    () => (result.page?.blocks || []).filter((block) => block.type === "figure"),
-    [result]
-  );
-
   useEffect(() => {
     setSelectedFigure(null);
     setSelectedBlock(null);
     setEditing(false);
     setDraft(description?.text || "");
+    setTagEditWarning(false);
+    setReviewerName(
+      description?.review?.reviewer || loadLocalValue("hope-reviewer-name", ""),
+    );
   }, [result, description?.text]);
 
   useEffect(() => () => window.clearTimeout(cursorCueTimerRef.current), []);
@@ -468,6 +876,25 @@ function PageDescriptionView({ result, onUpdateDescription }) {
     onUpdateDescription(draft);
     setEditing(false);
     setSelectedBlock(null);
+  }
+
+  function insertTranscriberNote() {
+    const editor = editorRef.current;
+    const start = editor?.selectionStart ?? draft.length;
+    const end = editor?.selectionEnd ?? start;
+    const needsLeadingBreak = start > 0 && draft[start - 1] !== "\n";
+    const needsTrailingBreak = end < draft.length && draft[end] !== "\n";
+    const insertedText = `${needsLeadingBreak ? "\n" : ""}[transcriber_note] 점역자 주 내용을 입력하세요.${needsTrailingBreak ? "\n" : ""}`;
+    const nextDraft = `${draft.slice(0, start)}${insertedText}${draft.slice(end)}`;
+    const selectionStart = start
+      + insertedText.indexOf("점역자 주 내용을 입력하세요.");
+    const selectionEnd = selectionStart + "점역자 주 내용을 입력하세요.".length;
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      if (!editorRef.current) return;
+      editorRef.current.focus();
+      editorRef.current.setSelectionRange(selectionStart, selectionEnd);
+    });
   }
 
   function beginBlockEdit(block) {
@@ -536,6 +963,9 @@ function PageDescriptionView({ result, onUpdateDescription }) {
         onClearFigure={() => setSelectedFigure(null)}
         selectedBlock={selectedBlock}
         onSelectBlock={beginBlockEdit}
+        onUpdateBlock={onUpdateBlock}
+        onAddFigure={onAddFigure}
+        onDeleteBlock={onDeleteBlock}
       />
       <section className="page-description-pane">
         <div className="page-review-heading">
@@ -543,6 +973,9 @@ function PageDescriptionView({ result, onUpdateDescription }) {
           <div className="page-actions">
             {editing ? (
               <>
+                <button className="text-button add-note-button" onClick={insertTranscriberNote}>
+                  + 점역자 주 추가
+                </button>
                 <button className="text-button" onClick={() => { setDraft(description.text || ""); setEditing(false); setSelectedBlock(null); }}>취소</button>
                 <button className="save-button" onClick={applyDraft}>수정 적용</button>
               </>
@@ -552,7 +985,11 @@ function PageDescriptionView({ result, onUpdateDescription }) {
         <div className="page-description-body">
           <div className="review-guide">
             <span aria-hidden="true">i</span>
-            <p>설명의 <strong>Figure 원본 보기</strong>를 누르면 왼쪽에서 실제 영역을 바로 확인할 수 있습니다.</p>
+            <p>
+              각 태그 앞의 <strong>⠿ 손잡이</strong>를 끌어 읽기 순서를 바꿀 수 있습니다.
+              Figure 원본 보기를 누르면 왼쪽에서 실제 영역을 확인할 수 있습니다.
+              <strong>점역자 주</strong> 표시를 누르면 촉각 그래픽 제작 대상으로 전환됩니다.
+            </p>
           </div>
           {editing ? (
             <>
@@ -564,6 +1001,12 @@ function PageDescriptionView({ result, onUpdateDescription }) {
                 </div>
               )}
               <div className={`editor-shell ${cursorCueVisible ? "show-cursor-cue" : ""}`}>
+                <div className={`locked-tag-notice ${tagEditWarning ? "warning" : ""}`}>
+                  <span aria-hidden="true">🔒</span>
+                  {tagEditWarning
+                    ? "블록 태그는 여기서 변경할 수 없습니다. 원본 영역의 ‘구조 수정’을 이용해 주세요."
+                    : "[figure], [table], [paragraph] 등의 블록 태그는 구조 수정에서만 변경됩니다."}
+                </div>
                 {cursorCueVisible && (
                   <span
                     className="cursor-position-cue"
@@ -578,7 +1021,19 @@ function PageDescriptionView({ result, onUpdateDescription }) {
                   className="page-description-editor"
                   value={draft}
                   onChange={(event) => {
-                    setDraft(event.target.value);
+                    const nextDraft = event.target.value;
+                    const currentTags = taggedLineSignature(draft);
+                    const nextTags = taggedLineSignature(nextDraft);
+                    if (
+                      currentTags.length !== nextTags.length
+                      || currentTags.some((tag, index) => tag !== nextTags[index])
+                    ) {
+                      setTagEditWarning(true);
+                      window.setTimeout(() => setTagEditWarning(false), 2400);
+                      return;
+                    }
+                    setDraft(nextDraft);
+                    setTagEditWarning(false);
                     setCursorCueVisible(false);
                   }}
                   onPointerDown={() => setCursorCueVisible(false)}
@@ -587,18 +1042,63 @@ function PageDescriptionView({ result, onUpdateDescription }) {
               </div>
             </>
           ) : (
-            <p className="page-description-text">
+            <div className="page-description-text">
               <LinkedPageDescription
                 text={description.text || "없음"}
-                figures={figureBlocks}
+                blocks={result.page?.blocks || []}
+                semanticAnalyses={result.semantic_analyses || []}
+                onMoveBlock={onMoveBlock}
+                onUpdateFigureTreatment={onUpdateFigureTreatment}
                 selectedFigure={selectedFigure}
                 onSelectFigure={setSelectedFigure}
               />
-            </p>
+            </div>
           )}
           <div className="review-footer">
-            <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
-            {description.was_generated && <span>모델 다듬기 적용</span>}
+            <div className="review-status-summary">
+              <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
+              {description.was_generated && <span>모델 다듬기 적용</span>}
+              {description.review?.history?.length > 0 && (
+                <span>
+                  최근 이력: {description.review.history.at(-1).reviewer}
+                  {" · "}
+                  {new Date(description.review.history.at(-1).at).toLocaleString("ko-KR")}
+                  {" · "}
+                  {description.review.history.at(-1).status === "reviewed" ? "검수 완료" : "재검수 시작"}
+                </span>
+              )}
+            </div>
+            <div className="page-review-controls">
+              <label>
+                <span>검수자</span>
+                <input
+                  value={reviewerName}
+                  placeholder="이름 입력"
+                  onChange={(event) => setReviewerName(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className={description.review_status === "reviewed" ? "reopen" : "complete"}
+                onClick={() => {
+                  const reviewer = reviewerName.trim();
+                  if (!reviewer) {
+                    window.alert("검수자 이름을 입력해 주세요.");
+                    return;
+                  }
+                  window.localStorage.setItem(
+                    "hope-reviewer-name",
+                    JSON.stringify(reviewer),
+                  );
+                  onUpdateReview(
+                    description.review_status === "reviewed" ? "needs_review" : "reviewed",
+                    reviewer,
+                  );
+                }}
+              >
+                {description.review_status === "reviewed" ? "검수 다시 열기" : "검수 완료"}
+              </button>
+            </div>
           </div>
           {description.warnings?.length > 0 && (
             <ul className="page-warning-list">
@@ -705,8 +1205,12 @@ function AnalysisInspector({ result, type }) {
   const [selectedId, setSelectedId] = useState(null);
 
   useEffect(() => {
-    setSelectedId(entries[0]?.block_id || null);
-  }, [type, result]);
+    setSelectedId((current) => (
+      entries.some((entry) => entry.block_id === current)
+        ? current
+        : entries[0]?.block_id || null
+    ));
+  }, [type, entries]);
 
   const selected = entries.find((item) => item.block_id === selectedId) || entries[0];
   if (!entries.length) return <div className="empty-state compact">이 페이지에서 {type} 블록을 찾지 못했습니다.</div>;
@@ -1035,11 +1539,18 @@ export default function App() {
 
   async function toggleSavedPageReview(page) {
     const nextStatus = page.reviewStatus === "reviewed" ? "needs_review" : "reviewed";
+    let reviewer = loadLocalValue("hope-reviewer-name", "");
+    if (!reviewer) {
+      reviewer = window.prompt("검수자 이름을 입력해 주세요.")?.trim() || "";
+      if (!reviewer) return;
+      window.localStorage.setItem("hope-reviewer-name", JSON.stringify(reviewer));
+    }
     try {
       const updatedPage = await updateWorkspacePageReviewStatus(
         page.projectId,
         page.pageNumber,
         nextStatus,
+        reviewer,
       );
       setSavedPages((current) => current.map((item) => (
         item.id === updatedPage.id ? updatedPage : item
@@ -1048,12 +1559,7 @@ export default function App() {
         resultOwnerId === page.projectId
         && Number(result?.page?.page_id) === page.pageNumber
       ) {
-        setResult((current) => ({
-          ...current,
-          page_description: current?.page_description
-            ? { ...current.page_description, review_status: nextStatus }
-            : current?.page_description,
-        }));
+        setResult(updatedPage.result);
       }
       showToast(nextStatus === "reviewed" ? "검토 완료로 표시했어요." : "검토 필요로 되돌렸어요.");
     } catch (err) {
@@ -1168,6 +1674,275 @@ export default function App() {
       };
     });
     showToast("수정한 설명을 저장했어요.");
+  }
+
+  function updateFigureTreatment(blockId, visualTreatment) {
+    setResult((current) => {
+      if (!current?.page?.blocks) return current;
+      const figureBlock = current.page.blocks.find(
+        (block) => block.block_id === blockId && block.type === "figure",
+      );
+      if (!figureBlock) return current;
+
+      const analyses = [...(current.semantic_analyses || [])];
+      const analysisIndex = analyses.findIndex((item) => item.block_id === blockId);
+      const existingAnalysis = analysisIndex >= 0
+        ? analyses[analysisIndex]
+        : {
+            page_id: current.page.page_id,
+            block_id: blockId,
+            type: "figure",
+            bbox: figureBlock.bbox,
+          };
+      const updatedAnalysis = {
+        ...existingAnalysis,
+        braille_review: {
+          ...(existingAnalysis.braille_review || {}),
+          visual_treatment: visualTreatment,
+        },
+      };
+
+      if (analysisIndex >= 0) analyses[analysisIndex] = updatedAnalysis;
+      else analyses.push(updatedAnalysis);
+
+      return {
+        ...current,
+        semantic_analyses: analyses,
+        page_description: current.page_description
+          ? {
+              ...current.page_description,
+              review_status: "needs_review",
+            }
+          : current.page_description,
+      };
+    });
+    showToast(
+      visualTreatment === "tactile_graphic"
+        ? "촉각 그래픽 제작 대상으로 표시했어요."
+        : "점역자 주 방식으로 표시했어요.",
+    );
+  }
+
+  function updatePageReview(reviewStatus, reviewer) {
+    const reviewedAt = new Date().toISOString();
+    setResult((current) => {
+      if (!current?.page_description) return current;
+      const previousReview = current.page_description.review || {};
+      const history = [
+        ...(previousReview.history || []),
+        {
+          status: reviewStatus,
+          reviewer,
+          at: reviewedAt,
+        },
+      ];
+      return {
+        ...current,
+        page_description: {
+          ...current.page_description,
+          review_status: reviewStatus,
+          review: {
+            ...previousReview,
+            reviewer,
+            reviewed_at: reviewStatus === "reviewed"
+              ? reviewedAt
+              : previousReview.reviewed_at || null,
+            reopened_at: reviewStatus === "needs_review" ? reviewedAt : null,
+            history,
+          },
+        },
+      };
+    });
+    showToast(reviewStatus === "reviewed" ? "검수 완료 이력을 저장했어요." : "검수를 다시 열었어요.");
+  }
+
+  function updatePageBlock(blockId, changes) {
+    setResult((current) => {
+      if (!current?.page?.blocks) return current;
+      const previousBlocks = current.page.blocks;
+      const previousBlock = previousBlocks.find((block) => block.block_id === blockId);
+      if (!previousBlock) return current;
+      const nextType = changes.type || previousBlock.type;
+      const blocks = previousBlocks.map((block) => (
+        block.block_id === blockId
+          ? {
+              ...block,
+              ...changes,
+              manually_corrected: true,
+            }
+          : block
+      ));
+      const typeChanged = nextType !== previousBlock.type;
+      const pageDescriptionText = typeChanged && current.page_description?.text
+        ? changeTaggedDescriptionLine(
+            current.page_description.text,
+            previousBlocks,
+            blockId,
+            nextType,
+          )
+        : current.page_description?.text;
+      const semanticAnalyses = typeChanged
+        ? (current.semantic_analyses || []).filter((item) => item.block_id !== blockId)
+        : (current.semantic_analyses || []).map((item) => (
+            item.block_id === blockId && changes.bbox
+              ? { ...item, bbox: changes.bbox }
+              : item
+          ));
+      return {
+        ...current,
+        page: { ...current.page, blocks },
+        semantic_analyses: semanticAnalyses,
+        page_description: current.page_description
+          ? {
+              ...current.page_description,
+              text: pageDescriptionText,
+              review_status: "needs_review",
+            }
+          : current.page_description,
+      };
+    });
+    showToast(changes.type ? "블록 유형을 수정했어요." : "블록 영역을 수정했어요.");
+  }
+
+  function addMissingFigure(bbox) {
+    setResult((current) => {
+      if (!current?.page?.blocks) return current;
+      const pageId = current.page.page_id;
+      const manualFigures = current.page.blocks.filter(
+        (block) => String(block.block_id).startsWith(`p${pageId}_manual_figure_`),
+      );
+      const blockId = `p${pageId}_manual_figure_${manualFigures.length + 1}`;
+      const readingOrder = Math.max(
+        0,
+        ...current.page.blocks.map((block) => Number(block.reading_order) || 0),
+      ) + 1;
+      const figureBlock = {
+        block_id: blockId,
+        type: "figure",
+        bbox,
+        score: null,
+        detector: "manual",
+        reading_order: readingOrder,
+        manually_added: true,
+      };
+      return {
+        ...current,
+        page: {
+          ...current.page,
+          blocks: [...current.page.blocks, figureBlock],
+        },
+        semantic_analyses: [
+          ...(current.semantic_analyses || []),
+          {
+            page_id: pageId,
+            block_id: blockId,
+            type: "figure",
+            bbox,
+            detection: {
+              model: { name: "manual", version: null },
+              confidence: null,
+            },
+            analysis: null,
+            description: {
+              status: "not_started",
+              review_status: "needs_review",
+            },
+            warnings: ["사용자가 누락된 Figure 영역을 추가했습니다."],
+          },
+        ],
+        page_description: current.page_description
+          ? {
+              ...current.page_description,
+              text: `${String(current.page_description.text || "").trimEnd()}\n[figure] 새 Figure 설명을 작성해 주세요.`,
+              review_status: "needs_review",
+            }
+          : current.page_description,
+      };
+    });
+    showToast("누락된 Figure 영역을 추가했어요. 설명을 검수해 주세요.");
+  }
+
+  function deletePageBlock(blockId) {
+    setResult((current) => {
+      if (!current?.page?.blocks) return current;
+      const previousBlocks = current.page.blocks;
+      if (!previousBlocks.some((block) => block.block_id === blockId)) return current;
+      const pageDescriptionText = current.page_description?.text
+        ? changeTaggedDescriptionLine(
+            current.page_description.text,
+            previousBlocks,
+            blockId,
+            null,
+          )
+        : current.page_description?.text;
+      return {
+        ...current,
+        page: {
+          ...current.page,
+          blocks: previousBlocks.filter((block) => block.block_id !== blockId),
+        },
+        semantic_analyses: (current.semantic_analyses || []).filter(
+          (item) => item.block_id !== blockId,
+        ),
+        page_description: current.page_description
+          ? {
+              ...current.page_description,
+              text: pageDescriptionText,
+              review_status: "needs_review",
+            }
+          : current.page_description,
+      };
+    });
+    showToast("오탐 블록을 삭제했어요.");
+  }
+
+  function updateBrailleReadingOrder(blockId, direction, targetBlockId = null) {
+    setResult((current) => {
+      if (!current?.page?.blocks) return current;
+      const previousBlocks = current.page.blocks;
+      const blocks = direction === "place" || direction === "place_after"
+        ? placeBrailleReadingGroup(
+            previousBlocks,
+            current.semantic_analyses,
+            blockId,
+            targetBlockId,
+            direction === "place_after" ? "after" : "before",
+          )
+        : moveBrailleReadingGroup(
+            previousBlocks,
+            current.semantic_analyses,
+            blockId,
+            direction,
+          );
+      const pageDescriptionText = current.page_description?.text
+        ? reorderTaggedPageDescription(
+            current.page_description.text,
+            previousBlocks,
+            blocks,
+          )
+        : current.page_description?.text;
+      return {
+        ...current,
+        page: { ...current.page, blocks },
+        page_description: current.page_description
+          ? {
+              ...current.page_description,
+              text: pageDescriptionText,
+              review_status: "needs_review",
+              warnings: [
+                ...(current.page_description.warnings || []).filter(
+                  (warning) => (
+                    warning !== "읽기 순서가 수동으로 조정되었습니다."
+                    && !warning.startsWith("읽기 순서를 조정했습니다.")
+                  ),
+                ),
+                "읽기 순서가 수동으로 조정되었습니다.",
+              ],
+            }
+          : current.page_description,
+      };
+    });
+    showToast("권장 읽기 순서를 조정했어요.");
   }
 
   function downloadJson() {
@@ -2173,8 +2948,24 @@ export default function App() {
               <p>왼쪽에서 교과서 PDF와 페이지를 선택한 뒤 분석을 시작하세요.</p>
             </div>
           ) : activeView === "layout" ? (
-            <div className="layout-view"><div className="pane-header"><h2>레이아웃 시각화</h2><span>{result.page.page_id}페이지</span></div><img src={result.visualization_image} alt="레이아웃 분석 시각화" /></div>
-          ) : activeView === "page" ? <PageDescriptionView result={result} onUpdateDescription={updatePageDescription} /> : activeView === "elements" ? (
+            <div className="layout-view">
+              <div className="pane-header"><h2>레이아웃 시각화</h2><span>{result.page.page_id}페이지</span></div>
+              <div className="layout-image-pane">
+                <img src={result.visualization_image} alt="레이아웃 분석 시각화" />
+              </div>
+            </div>
+          ) : activeView === "page" ? (
+            <PageDescriptionView
+              result={result}
+              onUpdateDescription={updatePageDescription}
+              onMoveBlock={updateBrailleReadingOrder}
+              onUpdateFigureTreatment={updateFigureTreatment}
+              onUpdateReview={updatePageReview}
+              onUpdateBlock={updatePageBlock}
+              onAddFigure={addMissingFigure}
+              onDeleteBlock={deletePageBlock}
+            />
+          ) : activeView === "elements" ? (
             <div className="element-analysis-view">
               <nav className="element-tabs" aria-label="요소 분석 종류">
                 {[

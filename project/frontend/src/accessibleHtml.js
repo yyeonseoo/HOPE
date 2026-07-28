@@ -1,3 +1,8 @@
+import {
+  linkedFigureCaptions,
+  sortBlocksForBrailleReading,
+} from "./brailleReadingOrder.js";
+
 const BLOCK_HEADINGS = {
   title: 4,
   section_title: 5,
@@ -132,7 +137,7 @@ function tableHtml(analysis, fallbackText) {
     </section>`;
 }
 
-function figureHtml(analysis, fallbackText, pageId, index) {
+function figureHtml(analysis, fallbackText, pageId, index, sourceCaption = "") {
   const explanation = descriptionText(analysis) || fallbackText || "그림 설명이 제공되지 않았다.";
   const figureType = analysis?.figure_type || analysis?.analysis?.result?.figure_type;
   const typeLabel = FIGURE_TYPE_LABELS[figureType] || "그림";
@@ -140,8 +145,9 @@ function figureHtml(analysis, fallbackText, pageId, index) {
   return `
     <figure aria-labelledby="${captionId}">
       <figcaption id="${captionId}">
-        <span class="element-label">${escapeHtml(`${index}번째 ${typeLabel} 설명`)}</span>
-        ${escapeHtml(explanation)}
+        <span class="element-label">${escapeHtml(`그림 ${index}. ${typeLabel}`)}</span>
+        <span class="figure-description"><strong>그림 설명</strong> ${escapeHtml(explanation)}</span>
+        ${sourceCaption ? `<span class="source-caption"><strong>원문 캡션</strong> ${escapeHtml(sourceCaption)}</span>` : ""}
       </figcaption>
     </figure>`;
 }
@@ -185,15 +191,19 @@ function pageHtml(result, includePageImages) {
   const pageId = Number(page?.page_id) || 1;
   const analyses = Array.isArray(result?.semantic_analyses) ? result.semantic_analyses : [];
   const analysisByBlock = new Map(analyses.map((item) => [item.block_id, item]));
+  const orderedBlocks = sortBlocksForBrailleReading(page?.blocks || []);
+  const { captionByFigureId, linkedCaptionIds } = linkedFigureCaptions(orderedBlocks, analyses);
   let figureIndex = 0;
 
-  const blocks = (page?.blocks || []).map((block) => {
+  const blocks = orderedBlocks.map((block) => {
+    if (linkedCaptionIds.has(block.block_id)) return "";
     const analysis = analysisByBlock.get(block.block_id);
     if (block.type === "formula") return formulaHtml(analysis, blockText(block));
     if (block.type === "table") return tableHtml(analysis, blockText(block));
     if (block.type === "figure") {
       figureIndex += 1;
-      return figureHtml(analysis, blockText(block), pageId, figureIndex);
+      const sourceCaption = blockText(captionByFigureId.get(block.block_id));
+      return figureHtml(analysis, blockText(block), pageId, figureIndex, sourceCaption);
     }
     return genericBlockHtml(block);
   }).filter(Boolean).join("\n");
@@ -210,6 +220,7 @@ function pageHtml(result, includePageImages) {
   return `
     <article class="textbook-page" id="page-${pageId}" aria-labelledby="page-${pageId}-title">
       <h2 id="page-${pageId}-title">${pageId}페이지</h2>
+      <p class="source-page-reference">원본 교과서 ${pageId}페이지</p>
       ${descriptionHtml}
       ${imageHtml}
       <section class="page-content" aria-labelledby="page-${pageId}-content-title">
@@ -274,6 +285,9 @@ export function buildAccessibleTextbookHtml({ title, pages, includePageImages = 
     h2, h3, h4, h5 { line-height: 1.45; }
     p { margin: .8rem 0; }
     .caption { color: #44534d; font-size: .95rem; }
+    .source-caption { display: block; margin-top: .65rem; }
+    .transcriber-note { display: block; }
+    .source-page-reference { color: #53645e; font-size: .9rem; margin-top: -.35rem; }
     .formula-block, .table-block, figure { background: #f4f8f5; border-left: 4px solid #6c9d51; margin: 1.3rem 0; overflow-x: auto; padding: 1rem 1.2rem; }
     .formula-text { font-family: "Cambria Math", serif; font-size: 1.2rem; }
     .element-label { display: block; font-size: .85rem; font-weight: 700; margin-bottom: .35rem; }

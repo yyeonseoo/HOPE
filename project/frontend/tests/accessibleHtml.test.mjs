@@ -6,10 +6,18 @@ const moduleSource = await readFile(
   new URL("../src/accessibleHtml.js", import.meta.url),
   "utf8",
 );
+const readingOrderSource = await readFile(
+  new URL("../src/brailleReadingOrder.js", import.meta.url),
+  "utf8",
+);
+const bundledModuleSource = moduleSource.replace(
+  /import\s*\{[\s\S]*?\}\s*from\s*["']\.\/brailleReadingOrder\.js["'];/,
+  readingOrderSource.replaceAll("export function", "function"),
+);
 const {
   accessibleHtmlFilename,
   buildAccessibleTextbookHtml,
-} = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString("base64")}`);
+} = await import(`data:text/javascript;base64,${Buffer.from(bundledModuleSource).toString("base64")}`);
 
 function samplePage(pageId = 2, paragraph = "관계를 살펴본다.") {
   return {
@@ -136,6 +144,46 @@ test("preserves the page description without exposing internal block markers", (
   assert.match(html, /수식 설명/);
   assert.match(html, /그림 설명/);
   assert.doesNotMatch(html, /\[paragraph\]|\[formula\]|\[figure\]/);
+});
+
+test("exports blocks in reading order and keeps a linked caption inside its figure", () => {
+  const page = samplePage(4);
+  page.page.blocks = [
+    { block_id: "caption", type: "caption", text: "그림 1 원문", reading_order: 3 },
+    { block_id: "figure", type: "figure", reading_order: 2 },
+    { block_id: "paragraph", type: "paragraph", text: "먼저 읽는 본문", reading_order: 1 },
+  ];
+  page.semantic_analyses = [{
+    block_id: "figure",
+    type: "figure",
+    figure_type: "graph",
+    description: { long_text: "그래프 접근성 설명" },
+    context_source: { caption_block_id: "caption" },
+  }];
+
+  const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+  assert.ok(html.indexOf("먼저 읽는 본문") < html.indexOf("그래프 접근성 설명"));
+  assert.ok(html.indexOf("그래프 접근성 설명") < html.indexOf("그림 1 원문"));
+  assert.equal((html.match(/그림 1 원문/g) || []).length, 1);
+});
+
+test("keeps braille production review metadata out of the student HTML", () => {
+  const page = samplePage(5);
+  page.semantic_analyses[2].braille_review = {
+    visual_strategy: "description",
+    visual_treatment: "tactile_graphic",
+    transcriber_note: "복잡한 시각 요소를 설명문으로 대체함.",
+    reviewed: true,
+  };
+
+  const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+  assert.match(html, /그림 설명/);
+  assert.match(html, /오른쪽 위로 향하는 직선 그래프이다/);
+  assert.doesNotMatch(html, /점역자 검수 설명/);
+  assert.doesNotMatch(html, /점역 변경·검수 기록/);
+  assert.doesNotMatch(html, /복잡한 시각 요소를 설명문으로 대체함/);
+  assert.doesNotMatch(html, /tactile_graphic/);
+  assert.doesNotMatch(html, /점역 참고 설명 · 검수 필요/);
 });
 
 test("escapes textbook text and creates a safe filename", () => {
