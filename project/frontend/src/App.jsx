@@ -216,10 +216,6 @@ function SemanticResult({ entry }) {
   return (
     <dl className="result-fields">
       <div><dt>유형</dt><dd>{result.figure_type}</dd></div>
-      <div><dt>제목</dt><dd>{result.title || "미인식"}</dd></div>
-      <div><dt>X축</dt><dd>{[result.x_axis?.label, result.x_axis?.unit].filter(Boolean).join(" · ") || "없음"}</dd></div>
-      <div><dt>Y축</dt><dd>{[result.y_axis?.label, result.y_axis?.unit].filter(Boolean).join(" · ") || "없음"}</dd></div>
-      <div><dt>계열</dt><dd>{result.series?.length ?? 0}개</dd></div>
     </dl>
   );
 }
