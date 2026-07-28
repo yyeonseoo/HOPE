@@ -186,6 +186,25 @@ test("keeps braille production review metadata out of the student HTML", () => {
   assert.doesNotMatch(html, /점역 참고 설명 · 검수 필요/);
 });
 
+test("omits a figure and its page-summary sentence from student HTML", () => {
+  const page = samplePage(6);
+  page.page_description = {
+    text: [
+      "[title] 함수",
+      "[paragraph] 두 값의 관계를 살펴본다.",
+      "[figure] 오른쪽 위로 향하는 직선 그래프이다.",
+    ].join("\n"),
+  };
+  page.semantic_analyses[2].braille_review = {
+    visual_treatment: "omit",
+  };
+
+  const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+  assert.doesNotMatch(html, /<figure(?:\s|>)/);
+  assert.doesNotMatch(html, /오른쪽 위로 향하는 직선 그래프이다/);
+  assert.match(html, /두 값의 관계를 살펴본다/);
+});
+
 test("escapes textbook text and creates a safe filename", () => {
   const html = buildAccessibleTextbookHtml({
     title: "수학 <교과서>",

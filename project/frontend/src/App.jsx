@@ -128,11 +128,97 @@ function changeTaggedDescriptionLine(text, blocks, blockId, nextType = null) {
   return lines.join("\n");
 }
 
+function replaceTaggedDescriptionContent(text, blocks, blockId, replacement) {
+  const orderedBlocks = sortBlocksForBrailleReading(blocks || []);
+  const block = orderedBlocks.find((item) => item.block_id === blockId);
+  if (!block || !replacement) return text;
+  const sameTypeIndex = orderedBlocks
+    .filter((item) => item.type === block.type)
+    .findIndex((item) => item.block_id === blockId);
+  if (sameTypeIndex < 0) return text;
+
+  const lines = String(text || "").split(/\r?\n/);
+  let currentIndex = -1;
+  const lineIndex = lines.findIndex((line) => {
+    const match = line.match(/^\s*\[([a-z_]+)\]/i);
+    if (match?.[1]?.toLowerCase() !== block.type) return false;
+    currentIndex += 1;
+    return currentIndex === sameTypeIndex;
+  });
+  if (lineIndex < 0) return text;
+  lines[lineIndex] = `[${block.type}] ${String(replacement).trim()}`;
+  return lines.join("\n");
+}
+
+function blockAnalysisMessage(type, state) {
+  const label = type === "figure" ? "Figure" : type === "table" ? "표" : "수식";
+  return state === "failed"
+    ? `${label} 구조를 인식하지 못했습니다. 원본을 확인하여 설명을 검수해 주세요.`
+    : `${label} 블록을 다시 분석하고 있습니다.`;
+}
+
+function summarizeApiUsage(analyses) {
+  const usages = (analyses || []).map((item) => item.api_usage).filter(Boolean);
+  if (!usages.length) return null;
+  return usages.reduce((summary, usage) => ({
+    provider: "openai",
+    model: summary.model || usage.model,
+    api_calls: summary.api_calls + Number(usage.api_calls || 0),
+    input_tokens: summary.input_tokens + Number(usage.input_tokens || 0),
+    cached_input_tokens: summary.cached_input_tokens + Number(usage.cached_input_tokens || 0),
+    output_tokens: summary.output_tokens + Number(usage.output_tokens || 0),
+    total_tokens: summary.total_tokens + Number(usage.total_tokens || 0),
+    estimated_cost_usd: Number(
+      (summary.estimated_cost_usd + Number(usage.estimated_cost_usd || 0)).toFixed(8),
+    ),
+  }), {
+    provider: "openai",
+    model: null,
+    api_calls: 0,
+    input_tokens: 0,
+    cached_input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    estimated_cost_usd: 0,
+  });
+}
+
 function taggedLineSignature(text) {
   return String(text || "")
     .split(/\r?\n/)
     .map((line) => line.match(/^\s*\[([a-z_]+)\]/i)?.[1]?.toLowerCase() || null)
     .filter(Boolean);
+}
+
+function protectedTagRanges(text) {
+  const source = String(text || "");
+  const ranges = [];
+  const pattern = /(^|\n)(\s*)(\[[a-z_]+\])/gi;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const start = match.index + match[1].length + match[2].length;
+    ranges.push({
+      start,
+      end: start + match[3].length,
+      tag: match[3],
+    });
+  }
+  return ranges;
+}
+
+function cursorAfterNearestProtectedTag(text, attemptedPosition) {
+  const ranges = protectedTagRanges(text);
+  if (!ranges.length) return Math.max(0, Math.min(String(text || "").length, attemptedPosition || 0));
+  const position = Number.isFinite(attemptedPosition) ? attemptedPosition : 0;
+  const nearest = ranges.reduce((best, range) => {
+    const distance = position < range.start
+      ? range.start - position
+      : position > range.end
+        ? position - range.end
+        : 0;
+    return !best || distance < best.distance ? { range, distance } : best;
+  }, null);
+  return nearest.range.end;
 }
 
 function BlockCrop({ imageUrl, bbox, alt }) {
@@ -282,6 +368,82 @@ function DescriptionResult({ description, captioningEnabled, type }) {
   );
 }
 
+const STRUCTURE_TYPE_OPTIONS = [
+  { value: "title", label: "제목" },
+  { value: "section_title", label: "단원 제목" },
+  { value: "paragraph", label: "본문" },
+  { value: "formula", label: "수식" },
+  { value: "table", label: "표" },
+  { value: "figure", label: "Figure" },
+  { value: "caption", label: "캡션" },
+  { value: "footer", label: "바닥글" },
+  { value: "page_number", label: "페이지 번호" },
+];
+
+function StructureTypeSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const current = (
+    STRUCTURE_TYPE_OPTIONS.find((option) => option.value === value)
+    || { value, label: value }
+  );
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutside = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="structure-type-select" ref={rootRef}>
+      <button
+        type="button"
+        className={`structure-type-trigger ${open ? "open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((currentOpen) => !currentOpen)}
+      >
+        <span className={`structure-type-dot type-${current.value}`} aria-hidden="true" />
+        <span>{current.label}</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="m5.5 7.5 4.5 4.5 4.5-4.5" />
+        </svg>
+      </button>
+      {open && (
+        <div className="structure-type-options" role="listbox" aria-label="블록 유형">
+          {STRUCTURE_TYPE_OPTIONS.map((option) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              className={option.value === value ? "selected" : ""}
+              key={option.value}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className={`structure-type-dot type-${option.value}`} aria-hidden="true" />
+              <span>{option.label}</span>
+              {option.value === value && <span className="structure-type-check" aria-hidden="true">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PageSourceViewer({
   result,
   selectedFigure,
@@ -300,6 +462,12 @@ function PageSourceViewer({
   const [structureBlock, setStructureBlock] = useState(null);
   const [draftRegion, setDraftRegion] = useState(null);
   const [redrawingBlock, setRedrawingBlock] = useState(false);
+  const [blockAnalysisState, setBlockAnalysisState] = useState("idle");
+  const [structurePanelPosition, setStructurePanelPosition] = useState(null);
+  const drawingRegionRef = useRef(null);
+  const structurePanelRef = useRef(null);
+  const structurePanelDragRef = useRef(null);
+  const suppressStructureClickRef = useRef(false);
   const bbox = selectedFigure?.bbox;
   const magnifierWidth = 300;
   const magnifierHeight = 210;
@@ -322,6 +490,9 @@ function PageSourceViewer({
     setStructureBlock(null);
     setDraftRegion(null);
     setRedrawingBlock(false);
+    setBlockAnalysisState("idle");
+    setStructurePanelPosition(null);
+    structurePanelDragRef.current = null;
   }, [result.page_image]);
 
   useEffect(() => {
@@ -331,6 +502,22 @@ function PageSourceViewer({
     );
     setStructureBlock(refreshed || null);
   }, [result.page?.blocks, structureBlock?.block_id]);
+
+  async function updateStructureBlock(changes) {
+    if (!structureBlock) return false;
+    const shouldAnalyze = (
+      changes.reanalyze
+      || (
+        changes.type
+        && changes.type !== structureBlock.type
+        && ["figure", "table", "formula"].includes(changes.type)
+      )
+    );
+    if (shouldAnalyze) setBlockAnalysisState("analyzing");
+    const completed = await onUpdateBlock(structureBlock.block_id, changes);
+    if (shouldAnalyze) setBlockAnalysisState(completed ? "complete" : "failed");
+    return completed;
+  }
 
   function updateMagnifier(event) {
     if (!magnifierEnabled) return;
@@ -374,16 +561,68 @@ function PageSourceViewer({
     };
   }
 
-  function normalizedDraftBbox() {
-    if (!draftRegion) return null;
-    const x1 = Math.round(Math.min(draftRegion.start.x, draftRegion.end.x));
-    const y1 = Math.round(Math.min(draftRegion.start.y, draftRegion.end.y));
-    const x2 = Math.round(Math.max(draftRegion.start.x, draftRegion.end.x));
-    const y2 = Math.round(Math.max(draftRegion.start.y, draftRegion.end.y));
+  function normalizeRegion(region) {
+    if (!region) return null;
+    const x1 = Math.round(Math.min(region.start.x, region.end.x));
+    const y1 = Math.round(Math.min(region.start.y, region.end.y));
+    const x2 = Math.round(Math.max(region.start.x, region.end.x));
+    const y2 = Math.round(Math.max(region.start.y, region.end.y));
     return x2 - x1 >= 8 && y2 - y1 >= 8 ? [x1, y1, x2, y2] : null;
   }
 
-  const draftBbox = normalizedDraftBbox();
+  function startStructurePanelDrag(event) {
+    if (event.button !== 0 && event.pointerType !== "touch") return;
+    const panel = structurePanelRef.current;
+    const container = panel?.offsetParent;
+    if (!panel || !container) return;
+    const panelRect = panel.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const left = panelRect.left - containerRect.left;
+    const top = panelRect.top - containerRect.top;
+    structurePanelDragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+    };
+    setStructurePanelPosition({ left, top });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function moveStructurePanel(event) {
+    const drag = structurePanelDragRef.current;
+    const panel = structurePanelRef.current;
+    const container = panel?.offsetParent;
+    if (!drag || drag.pointerId !== event.pointerId || !panel || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const edge = 8;
+    const left = Math.max(
+      edge,
+      Math.min(
+        containerRect.width - panel.offsetWidth - edge,
+        event.clientX - containerRect.left - drag.offsetX,
+      ),
+    );
+    const top = Math.max(
+      edge,
+      Math.min(
+        containerRect.height - panel.offsetHeight - edge,
+        event.clientY - containerRect.top - drag.offsetY,
+      ),
+    );
+    setStructurePanelPosition({ left, top });
+  }
+
+  function finishStructurePanelDrag(event) {
+    const drag = structurePanelDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    structurePanelDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  const draftBbox = normalizeRegion(draftRegion);
   const draftStyle = draftBbox && imageSize ? {
     left: `${(draftBbox[0] / imageSize.width) * 100}%`,
     top: `${(draftBbox[1] / imageSize.height) * 100}%`,
@@ -406,6 +645,8 @@ function PageSourceViewer({
               setStructureBlock(null);
               setDraftRegion(null);
               setRedrawingBlock(false);
+              setStructurePanelPosition(null);
+              structurePanelDragRef.current = null;
               setMagnifierEnabled(false);
               setMagnifier(null);
             }}
@@ -461,20 +702,61 @@ function PageSourceViewer({
           ].filter(Boolean).join(" ")}
           style={{ transform: `scale(${pageZoom / 100})` }}
           onPointerDown={(event) => {
-            if (!structureEditing || event.target.closest(".page-edit-region")) return;
+            if (!structureEditing || (event.button !== 0 && event.pointerType !== "touch")) return;
+            if (event.target.closest(".page-edit-region")) return;
             const point = imagePoint(event);
             if (!point) return;
             event.currentTarget.setPointerCapture(event.pointerId);
-            setDraftRegion({ start: point, end: point });
+            const nextRegion = {
+              pointerId: event.pointerId,
+              start: point,
+              end: point,
+              moved: false,
+            };
+            drawingRegionRef.current = nextRegion;
+            suppressStructureClickRef.current = false;
+            setDraftRegion(nextRegion);
             if (!redrawingBlock) setStructureBlock(null);
           }}
           onPointerMove={(event) => {
-            if (!structureEditing || !draftRegion) return;
+            const current = drawingRegionRef.current;
+            if (!structureEditing || !current || current.pointerId !== event.pointerId) return;
             const point = imagePoint(event);
-            if (point) setDraftRegion((current) => ({ ...current, end: point }));
+            if (!point) return;
+            const moved = (
+              current.moved
+              || Math.abs(point.x - current.start.x) >= 3
+              || Math.abs(point.y - current.start.y) >= 3
+            );
+            const nextRegion = { ...current, end: point, moved };
+            drawingRegionRef.current = nextRegion;
+            suppressStructureClickRef.current = moved;
+            setDraftRegion(nextRegion);
           }}
           onPointerUp={(event) => {
-            if (!structureEditing || !draftRegion) return;
+            const current = drawingRegionRef.current;
+            if (!structureEditing || !current || current.pointerId !== event.pointerId) return;
+            const point = imagePoint(event) || current.end;
+            const completedRegion = { ...current, end: point };
+            drawingRegionRef.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+            if (normalizeRegion(completedRegion)) {
+              suppressStructureClickRef.current = true;
+              setDraftRegion(completedRegion);
+              window.setTimeout(() => {
+                suppressStructureClickRef.current = false;
+              }, 0);
+            } else {
+              setDraftRegion(null);
+            }
+          }}
+          onPointerCancel={(event) => {
+            const current = drawingRegionRef.current;
+            if (!current || current.pointerId !== event.pointerId) return;
+            drawingRegionRef.current = null;
+            setDraftRegion(null);
             if (event.currentTarget.hasPointerCapture(event.pointerId)) {
               event.currentTarget.releasePointerCapture(event.pointerId);
             }
@@ -483,6 +765,7 @@ function PageSourceViewer({
           <img
             src={result.page_image}
             alt={`${result.page?.page_id}페이지 원본 교과서`}
+            draggable={false}
             onLoad={(event) => setImageSize({
               width: event.currentTarget.naturalWidth,
               height: event.currentTarget.naturalHeight,
@@ -510,10 +793,16 @@ function PageSourceViewer({
               }}
               onClick={(event) => {
                 event.stopPropagation();
+                if (suppressStructureClickRef.current) {
+                  suppressStructureClickRef.current = false;
+                  return;
+                }
                 if (structureEditing) {
                   setStructureBlock(block);
+                  setBlockAnalysisState("idle");
                   setDraftRegion(null);
                   setRedrawingBlock(false);
+                  onSelectBlock(block);
                 } else {
                   onSelectBlock(block);
                 }
@@ -544,7 +833,27 @@ function PageSourceViewer({
           )}
         </div>
         {structureEditing && (
-          <div className="structure-editor-panel">
+          <div
+            ref={structurePanelRef}
+            className="structure-editor-panel"
+            style={structurePanelPosition ? {
+              bottom: "auto",
+              left: `${structurePanelPosition.left}px`,
+              top: `${structurePanelPosition.top}px`,
+            } : undefined}
+          >
+            <button
+              type="button"
+              className="structure-panel-drag-handle"
+              aria-label="구조 수정 도구 상자 위치 이동"
+              title="잡고 끌어서 도구 상자 이동"
+              onPointerDown={startStructurePanelDrag}
+              onPointerMove={moveStructurePanel}
+              onPointerUp={finishStructurePanelDrag}
+              onPointerCancel={finishStructurePanelDrag}
+            >
+              <span aria-hidden="true">⠿</span>
+            </button>
             <div>
               <strong>구조 수정</strong>
               <span>
@@ -561,19 +870,33 @@ function PageSourceViewer({
               <>
                 <label>
                   <span>블록 유형</span>
-                  <select
+                  <StructureTypeSelect
                     value={structureBlock.type}
-                    onChange={(event) => onUpdateBlock(
-                      structureBlock.block_id,
-                      { type: event.target.value },
-                    )}
-                  >
-                    {[
-                      "title", "section_title", "paragraph", "formula",
-                      "table", "figure", "caption", "footer", "page_number",
-                    ].map((type) => <option key={type} value={type}>{type}</option>)}
-                  </select>
+                    onChange={(nextType) => updateStructureBlock({ type: nextType })}
+                  />
                 </label>
+                {["figure", "table", "formula"].includes(structureBlock.type) && (
+                  <button
+                    type="button"
+                    className="reanalyze-block-button"
+                    disabled={blockAnalysisState === "analyzing"}
+                    onClick={() => updateStructureBlock({ reanalyze: true })}
+                  >
+                    {blockAnalysisState === "analyzing"
+                      ? "이 블록 분석 중…"
+                      : "이 블록 다시 분석"}
+                  </button>
+                )}
+                {blockAnalysisState === "complete" && (
+                  <span className="block-analysis-feedback success">
+                    완료 · 요소 분석과 접근성 설명에 반영됨
+                  </span>
+                )}
+                {blockAnalysisState === "failed" && (
+                  <span className="block-analysis-feedback failed">
+                    재분석 실패 · 기존 구조 변경은 유지됨
+                  </span>
+                )}
                 {!draftBbox && (
                   <button
                     type="button"
@@ -792,31 +1115,64 @@ function LinkedPageDescription({
       || "transcriber_note"
     );
     const isTactileGraphic = visualTreatment === "tactile_graphic";
+    const isOmitted = visualTreatment === "omit";
+    const previousVisualTreatment = (
+      figureAnalysis?.braille_review?.previous_visual_treatment
+      || "transcriber_note"
+    );
     return (
       <div key={block.block_id || index} {...rowProps}>
         {moveHandle}
-        <div className={`figure-description-inline ${isTactileGraphic ? "is-tactile-graphic" : "is-transcriber-note"}`}>
+        <div className={[
+          "figure-description-inline",
+          isOmitted
+            ? "is-omitted"
+            : (isTactileGraphic ? "is-tactile-graphic" : "is-transcriber-note"),
+        ].join(" ")}>
           <div className="figure-description-meta">
             <button
               type="button"
               className={`inline-visual-treatment-toggle ${isTactileGraphic ? "tactile" : "note"}`}
               aria-pressed={isTactileGraphic}
-              title={isTactileGraphic
+              title={isOmitted
+                ? "이미지 생략을 취소하고 점역자 주로 복원"
+                : isTactileGraphic
                 ? "점역자 주 방식으로 변경"
                 : "촉각 그래픽 제작 대상으로 변경"}
               onClick={() => onUpdateFigureTreatment(
                 block.block_id,
-                isTactileGraphic ? "transcriber_note" : "tactile_graphic",
+                isOmitted
+                  ? "transcriber_note"
+                  : (isTactileGraphic ? "transcriber_note" : "tactile_graphic"),
               )}
             >
-              <span aria-hidden="true">{isTactileGraphic ? "▧" : "✓"}</span>
-              {isTactileGraphic ? "촉각 그래픽 제작 대상" : "점역자 주"}
+              <span aria-hidden="true">{isOmitted ? "↩" : (isTactileGraphic ? "▧" : "✓")}</span>
+              {isOmitted
+                ? "점역자 주로 복원"
+                : (isTactileGraphic ? "촉각 그래픽 제작 대상" : "점역자 주")}
+            </button>
+            <button
+              type="button"
+              className={`inline-visual-treatment-toggle omit ${isOmitted ? "active" : ""}`}
+              aria-pressed={isOmitted}
+              title={isOmitted
+                ? "이미지 생략 취소"
+                : "최종 접근성 자료와 HTML에서 이 이미지 설명 생략"}
+              onClick={() => onUpdateFigureTreatment(
+                block.block_id,
+                isOmitted ? previousVisualTreatment : "omit",
+              )}
+            >
+              <span aria-hidden="true">{isOmitted ? "↩" : "⊘"}</span>
+              {isOmitted ? "생략 취소" : "이미지 생략"}
             </button>
             <span className="figure-tag">[figure]</span>
           </div>
           <div className="figure-description-content">
             <span className="figure-description-copy">
-              {noteText || "Figure 설명을 작성해 주세요."}
+              {isOmitted
+                ? <strong className="omitted-label">최종 자료에서 생략됨</strong>
+                : (noteText || "Figure 설명을 작성해 주세요.")}
             </span>
             <button
               className={`figure-reference inline ${selectedFigure?.block_id === block.block_id ? "active" : ""}`}
@@ -855,6 +1211,7 @@ function PageDescriptionView({
   );
   const editorRef = useRef(null);
   const cursorCueTimerRef = useRef(null);
+  const tagWarningTimerRef = useRef(null);
   useEffect(() => {
     setSelectedFigure(null);
     setSelectedBlock(null);
@@ -866,7 +1223,10 @@ function PageDescriptionView({
     );
   }, [result, description?.text]);
 
-  useEffect(() => () => window.clearTimeout(cursorCueTimerRef.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(cursorCueTimerRef.current);
+    window.clearTimeout(tagWarningTimerRef.current);
+  }, []);
 
   if (!description || description.status === "failed") {
     return <div className="empty-state result-empty">이 페이지에서 읽을 수 있는 내용을 찾지 못했습니다.</div>;
@@ -900,7 +1260,8 @@ function PageDescriptionView({
   function beginBlockEdit(block) {
     setSelectedBlock(block);
     setEditing(true);
-    const sameTypeBlocks = (result.page?.blocks || []).filter((item) => item.type === block.type);
+    const sameTypeBlocks = sortBlocksForBrailleReading(result.page?.blocks || [])
+      .filter((item) => item.type === block.type);
     const blockIndex = Math.max(0, sameTypeBlocks.findIndex((item) => item.block_id === block.block_id));
     const tokenPattern = new RegExp(`\\[${block.type}\\]`, "gi");
     const matches = [...draft.matchAll(tokenPattern)];
@@ -947,9 +1308,59 @@ function PageDescriptionView({
       const caretTop = caretMarker.offsetTop;
       const targetScrollTop = Math.max(0, caretTop - editor.clientHeight * 0.3);
       editor.scrollTop = targetScrollTop;
-      setCursorCueTop(Math.max(16, caretTop - editor.scrollTop));
+      setCursorCueTop(Math.max(
+        editor.offsetTop + 8,
+        editor.offsetTop + caretTop - editor.scrollTop,
+      ));
       setCursorCueVisible(true);
       cursorCueTimerRef.current = window.setTimeout(() => setCursorCueVisible(false), 2200);
+      mirror.remove();
+      editor.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function rejectProtectedTagEdit(attemptedPosition) {
+    const cursorPosition = cursorAfterNearestProtectedTag(draft, attemptedPosition);
+    window.clearTimeout(tagWarningTimerRef.current);
+    setTagEditWarning(true);
+    setCursorCueVisible(false);
+    tagWarningTimerRef.current = window.setTimeout(() => setTagEditWarning(false), 2800);
+    window.requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      editor.setSelectionRange(cursorPosition, cursorPosition);
+
+      const computedStyle = window.getComputedStyle(editor);
+      const mirror = document.createElement("div");
+      const caretMarker = document.createElement("span");
+      const mirroredProperties = [
+        "fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing", "lineHeight",
+        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+        "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+      ];
+      mirroredProperties.forEach((property) => {
+        mirror.style[property] = computedStyle[property];
+      });
+      const mirrorBorderWidth = (
+        (Number.parseFloat(computedStyle.borderLeftWidth) || 0)
+        + (Number.parseFloat(computedStyle.borderRightWidth) || 0)
+      );
+      mirror.style.borderStyle = "solid";
+      mirror.style.boxSizing = "border-box";
+      mirror.style.overflowWrap = "break-word";
+      mirror.style.position = "fixed";
+      mirror.style.visibility = "hidden";
+      mirror.style.whiteSpace = "pre-wrap";
+      mirror.style.width = `${editor.clientWidth + mirrorBorderWidth}px`;
+      mirror.style.wordBreak = "break-word";
+      mirror.textContent = draft.slice(0, cursorPosition);
+      caretMarker.textContent = "\u200b";
+      mirror.appendChild(caretMarker);
+      document.body.appendChild(mirror);
+
+      const caretTop = caretMarker.offsetTop;
+      editor.scrollTop = Math.max(0, caretTop - editor.clientHeight * 0.3);
       mirror.remove();
       editor.scrollIntoView({ behavior: "smooth", block: "center" });
     });
@@ -1004,9 +1415,18 @@ function PageDescriptionView({
                 <div className={`locked-tag-notice ${tagEditWarning ? "warning" : ""}`}>
                   <span aria-hidden="true">🔒</span>
                   {tagEditWarning
-                    ? "블록 태그는 여기서 변경할 수 없습니다. 원본 영역의 ‘구조 수정’을 이용해 주세요."
+                    ? "블록 태그는 구조 정보를 보호하기 위해 수정할 수 없어요. 커서를 태그 바로 뒤로 옮겼습니다."
                     : "[figure], [table], [paragraph] 등의 블록 태그는 구조 수정에서만 변경됩니다."}
                 </div>
+                {tagEditWarning && (
+                  <div className="protected-tag-toast" role="alert" aria-live="assertive">
+                    <span aria-hidden="true">🔒</span>
+                    <div>
+                      <strong>태그는 수정할 수 없어요</strong>
+                      <small>내용은 태그 바로 뒤에서 이어서 수정해 주세요.</small>
+                    </div>
+                  </div>
+                )}
                 {cursorCueVisible && (
                   <span
                     className="cursor-position-cue"
@@ -1028,8 +1448,7 @@ function PageDescriptionView({
                       currentTags.length !== nextTags.length
                       || currentTags.some((tag, index) => tag !== nextTags[index])
                     ) {
-                      setTagEditWarning(true);
-                      window.setTimeout(() => setTagEditWarning(false), 2400);
+                      rejectProtectedTagEdit(event.target.selectionStart);
                       return;
                     }
                     setDraft(nextDraft);
@@ -1368,6 +1787,7 @@ export default function App() {
   const [libraryQuery, setLibraryQuery] = useState("");
   const [librarySort, setLibrarySort] = useState("recent");
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [libraryUtilityMenuOpen, setLibraryUtilityMenuOpen] = useState(false);
   const [renameProject, setRenameProject] = useState(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [savedPagesDialogOpen, setSavedPagesDialogOpen] = useState(false);
@@ -1386,6 +1806,7 @@ export default function App() {
   const toastTimerRef = useRef(null);
   const projectFileInputRef = useRef(null);
   const resultWorkspaceRef = useRef(null);
+  const libraryUtilityMenuRef = useRef(null);
 
   useEffect(() => {
     function syncFullscreenState() {
@@ -1405,6 +1826,26 @@ export default function App() {
     document.addEventListener("pointerdown", closeSettingsOutside);
     return () => document.removeEventListener("pointerdown", closeSettingsOutside);
   }, [openBookSettings]);
+
+  useEffect(() => {
+    if (!libraryUtilityMenuOpen) return undefined;
+    function closeUtilityMenu(event) {
+      if (!libraryUtilityMenuRef.current?.contains(event.target)) {
+        setLibraryUtilityMenuOpen(false);
+      }
+    }
+    function closeUtilityMenuOnEscape(event) {
+      if (event.key !== "Escape") return;
+      setLibraryUtilityMenuOpen(false);
+      libraryUtilityMenuRef.current?.querySelector(".library-menu-trigger")?.focus();
+    }
+    document.addEventListener("pointerdown", closeUtilityMenu);
+    document.addEventListener("keydown", closeUtilityMenuOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeUtilityMenu);
+      document.removeEventListener("keydown", closeUtilityMenuOnEscape);
+    };
+  }, [libraryUtilityMenuOpen]);
 
   async function toggleResultFullscreen() {
     try {
@@ -1463,8 +1904,14 @@ export default function App() {
 
   const blockStats = useMemo(() => {
     const blocks = result?.page?.blocks || [];
+    const analyzedTypes = new Map(
+      (result?.semantic_analyses || [])
+        .filter((item) => REVIEW_TYPES.includes(item.type))
+        .map((item) => [item.block_id, item.type]),
+    );
     return blocks.reduce((acc, block) => {
-      acc[block.type] = (acc[block.type] || 0) + 1;
+      const resolvedType = analyzedTypes.get(block.block_id) || block.type;
+      acc[resolvedType] = (acc[resolvedType] || 0) + 1;
       return acc;
     }, {});
   }, [result]);
@@ -1698,6 +2145,15 @@ export default function App() {
         ...existingAnalysis,
         braille_review: {
           ...(existingAnalysis.braille_review || {}),
+          ...(visualTreatment === "omit"
+            ? {
+                previous_visual_treatment: (
+                  existingAnalysis.braille_review?.visual_treatment === "tactile_graphic"
+                    ? "tactile_graphic"
+                    : "transcriber_note"
+                ),
+              }
+            : {}),
           visual_treatment: visualTreatment,
         },
       };
@@ -1719,7 +2175,9 @@ export default function App() {
     showToast(
       visualTreatment === "tactile_graphic"
         ? "촉각 그래픽 제작 대상으로 표시했어요."
-        : "점역자 주 방식으로 표시했어요.",
+        : visualTreatment === "omit"
+          ? "최종 접근성 자료에서 이미지를 생략하도록 표시했어요."
+          : "점역자 주 방식으로 표시했어요.",
     );
   }
 
@@ -1756,36 +2214,44 @@ export default function App() {
     showToast(reviewStatus === "reviewed" ? "검수 완료 이력을 저장했어요." : "검수를 다시 열었어요.");
   }
 
-  function updatePageBlock(blockId, changes) {
-    setResult((current) => {
+  async function updatePageBlock(blockId, changes) {
+    const { reanalyze = false, ...blockChanges } = changes;
+    const applyBlockChanges = (current) => {
       if (!current?.page?.blocks) return current;
       const previousBlocks = current.page.blocks;
       const previousBlock = previousBlocks.find((block) => block.block_id === blockId);
       if (!previousBlock) return current;
-      const nextType = changes.type || previousBlock.type;
+      const nextType = blockChanges.type || previousBlock.type;
       const blocks = previousBlocks.map((block) => (
         block.block_id === blockId
           ? {
               ...block,
-              ...changes,
+              ...blockChanges,
               manually_corrected: true,
             }
           : block
       ));
       const typeChanged = nextType !== previousBlock.type;
       const pageDescriptionText = typeChanged && current.page_description?.text
-        ? changeTaggedDescriptionLine(
-            current.page_description.text,
-            previousBlocks,
+        ? replaceTaggedDescriptionContent(
+            changeTaggedDescriptionLine(
+              current.page_description.text,
+              previousBlocks,
+              blockId,
+              nextType,
+            ),
+            blocks,
             blockId,
-            nextType,
+            ["figure", "table", "formula"].includes(nextType)
+              ? blockAnalysisMessage(nextType, "analyzing")
+              : String(previousBlock.text || "").trim() || `${nextType} 블록`,
           )
         : current.page_description?.text;
       const semanticAnalyses = typeChanged
         ? (current.semantic_analyses || []).filter((item) => item.block_id !== blockId)
         : (current.semantic_analyses || []).map((item) => (
-            item.block_id === blockId && changes.bbox
-              ? { ...item, bbox: changes.bbox }
+            item.block_id === blockId && blockChanges.bbox
+              ? { ...item, bbox: blockChanges.bbox }
               : item
           ));
       return {
@@ -1800,8 +2266,108 @@ export default function App() {
             }
           : current.page_description,
       };
-    });
-    showToast(changes.type ? "블록 유형을 수정했어요." : "블록 영역을 수정했어요.");
+    };
+    const previousBlock = result?.page?.blocks?.find((block) => block.block_id === blockId);
+    const nextType = blockChanges.type || previousBlock?.type;
+    const typeChanged = Boolean(previousBlock && nextType !== previousBlock.type);
+    const nextResult = applyBlockChanges(result);
+    setResult((current) => applyBlockChanges(current));
+    if (blockChanges.type) showToast("블록 유형을 수정했어요.");
+    else if (blockChanges.bbox) showToast("블록 영역을 수정했어요.");
+
+    if (
+      (!typeChanged && !reanalyze)
+      || !["figure", "table", "formula"].includes(nextType)
+      || !nextResult?.page_image
+    ) {
+      return true;
+    }
+
+    showToast(
+      nextType === "figure"
+        ? "변경한 Figure만 GPT로 분석하고 있어요."
+        : `변경한 ${nextType} 블록만 전용 분석기로 확인하고 있어요.`,
+    );
+    try {
+      const imageResponse = await fetch(nextResult.page_image);
+      if (!imageResponse.ok) throw new Error("페이지 이미지를 불러오지 못했습니다.");
+      const imageBlob = await imageResponse.blob();
+      const formData = new FormData();
+      formData.append("page_image", imageBlob, "page.png");
+      formData.append("page_json", JSON.stringify(nextResult.page));
+      formData.append(
+        "semantic_analyses_json",
+        JSON.stringify(nextResult.semantic_analyses || []),
+      );
+      formData.append("block_id", blockId);
+      formData.append("target_type", nextType);
+      const response = await fetch(`${API_BASE}/api/analyze-block`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) throw new Error(await parseError(response));
+      const payload = await response.json();
+
+      setResult((current) => {
+        if (!current?.page?.blocks) return current;
+        const currentBlock = current.page.blocks.find((block) => block.block_id === blockId);
+        if (!currentBlock || currentBlock.type !== nextType) return current;
+        const analyses = [
+          ...(current.semantic_analyses || []).filter((item) => item.block_id !== blockId),
+          payload.analysis,
+        ];
+        const replacementText = payload.description_text || (
+          typeChanged ? blockAnalysisMessage(nextType, "failed") : null
+        );
+        const pageDescriptionText = current.page_description?.text && replacementText
+          ? replaceTaggedDescriptionContent(
+              current.page_description.text,
+              current.page.blocks,
+              blockId,
+              replacementText,
+            )
+          : current.page_description?.text;
+        return {
+          ...current,
+          semantic_analyses: analyses,
+          api_usage: summarizeApiUsage(analyses),
+          page_description: current.page_description
+            ? {
+                ...current.page_description,
+                text: pageDescriptionText,
+                review_status: "needs_review",
+              }
+            : current.page_description,
+        };
+      });
+      showToast(
+        payload.analysis_engine === "openai"
+          ? "변경한 Figure의 GPT 분석을 반영했어요."
+          : `변경한 ${nextType} 블록의 분석을 반영했어요.`,
+      );
+      return true;
+    } catch (err) {
+      if (typeChanged) {
+        setResult((current) => {
+          if (!current?.page_description?.text) return current;
+          return {
+            ...current,
+            page_description: {
+              ...current.page_description,
+              text: replaceTaggedDescriptionContent(
+                current.page_description.text,
+                current.page.blocks,
+                blockId,
+                blockAnalysisMessage(nextType, "failed"),
+              ),
+              review_status: "needs_review",
+            },
+          };
+        });
+      }
+      setError(`블록 재분석에 실패했습니다. 구조 변경은 유지됩니다. ${err.message}`);
+      return false;
+    }
   }
 
   function addMissingFigure(bbox) {
@@ -2440,13 +3006,61 @@ export default function App() {
               <p>교과서를 선택해 분석을 이어가거나 새로운 교과서를 추가하세요.</p>
             </div>
             <div className="library-actions">
-              <button type="button" className="secondary-button tutorial-replay-button" onClick={() => { setOnboardingStep(0); setOnboardingOpen(true); }}>
-                튜토리얼
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setGroupManagerOpen(true)}>그룹 관리</button>
-              <button type="button" className="secondary-button trash-button" onClick={() => setActiveGroup("trash")}>
-                휴지통 {trashedProjects.length > 0 && <span>{trashedProjects.length}</span>}
-              </button>
+              <div className="library-utility-menu" ref={libraryUtilityMenuRef}>
+                <button
+                  type="button"
+                  className={`library-menu-trigger ${libraryUtilityMenuOpen ? "open" : ""}`}
+                  aria-haspopup="menu"
+                  aria-expanded={libraryUtilityMenuOpen}
+                  onClick={() => setLibraryUtilityMenuOpen((current) => !current)}
+                >
+                  <span className="library-menu-dots" aria-hidden="true">•••</span>
+                  관리
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m4 6 4 4 4-4" />
+                  </svg>
+                </button>
+                {libraryUtilityMenuOpen && (
+                  <div className="library-utility-options" role="menu" aria-label="교과서 보관함 관리">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setLibraryUtilityMenuOpen(false);
+                        setOnboardingStep(0);
+                        setOnboardingOpen(true);
+                      }}
+                    >
+                      <span className="library-option-icon tutorial" aria-hidden="true">?</span>
+                      <span><strong>튜토리얼</strong><small>사용 방법 다시 보기</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setLibraryUtilityMenuOpen(false);
+                        setGroupManagerOpen(true);
+                      }}
+                    >
+                      <span className="library-option-icon group" aria-hidden="true">▦</span>
+                      <span><strong>그룹 관리</strong><small>교재 그룹 정리하기</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="trash"
+                      onClick={() => {
+                        setLibraryUtilityMenuOpen(false);
+                        setActiveGroup("trash");
+                      }}
+                    >
+                      <span className="library-option-icon trash" aria-hidden="true">♲</span>
+                      <span><strong>휴지통</strong><small>삭제한 교재 확인</small></span>
+                      {trashedProjects.length > 0 && <b>{trashedProjects.length}</b>}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button type="button" className="add-project-button" onClick={() => projectFileInputRef.current?.click()}>
                 <span aria-hidden="true">＋</span> 교과서 추가
               </button>
@@ -2899,6 +3513,17 @@ export default function App() {
                   <div key={type}><span>{type}</span><strong>{count}</strong></div>
                 ))}
               </div>
+              {result.api_usage && (
+                <div className="api-usage-summary">
+                  <span>GPT API 사용량</span>
+                  <strong>{Number(result.api_usage.total_tokens || 0).toLocaleString()} tokens</strong>
+                  <small>
+                    {result.api_usage.api_calls}회 호출 · 예상 ${Number(
+                      result.api_usage.estimated_cost_usd || 0,
+                    ).toFixed(4)}
+                  </small>
+                </div>
+              )}
               <div className="download-actions">
                 <button className="secondary-button" onClick={downloadCurrentPageHtml}>
                   접근성 HTML 다운로드

@@ -8,7 +8,11 @@ import cv2
 import numpy as np
 from jsonschema import Draft202012Validator
 
-from src.analysis.table.analyzer import analyze_table_blocks, get_neighbor_block_id
+from src.analysis.table.analyzer import (
+    analyze_table_blocks,
+    get_neighbor_block_id,
+    reconcile_reclassified_table_blocks,
+)
 from src.analysis.table.crop import crop_and_save_table_block
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +32,40 @@ class GetNeighborBlockIdTests(unittest.TestCase):
         blocks = [{"block_id": "p9_b1"}]
         self.assertIsNone(get_neighbor_block_id(blocks, -1))
         self.assertIsNone(get_neighbor_block_id(blocks, 1))
+
+
+class ReconcileReclassifiedTableBlocksTests(unittest.TestCase):
+    def test_promotes_formula_block_and_removes_stale_formula_analysis(self):
+        page = _page([
+            {"block_id": "p9_b1", "type": "formula"},
+            {"block_id": "p9_b2", "type": "figure"},
+        ])
+        records = [
+            {"block_id": "p9_b1", "type": "formula", "analysis": {"status": "success"}},
+            {"block_id": "p9_b1", "type": "table", "analysis": {"status": "partial"}},
+            {"block_id": "p9_b2", "type": "figure", "analysis": {"status": "success"}},
+        ]
+
+        reconciled = reconcile_reclassified_table_blocks(page, records)
+
+        self.assertEqual(page["blocks"][0]["type"], "table")
+        self.assertEqual(page["blocks"][0]["original_type"], "formula")
+        self.assertEqual(
+            [(item["block_id"], item["type"]) for item in reconciled],
+            [("p9_b1", "table"), ("p9_b2", "figure")],
+        )
+
+    def test_failed_table_analysis_does_not_promote_formula_block(self):
+        page = _page([{"block_id": "p9_b1", "type": "formula"}])
+        records = [
+            {"block_id": "p9_b1", "type": "formula", "analysis": {"status": "success"}},
+            {"block_id": "p9_b1", "type": "table", "analysis": {"status": "failed"}},
+        ]
+
+        reconciled = reconcile_reclassified_table_blocks(page, records)
+
+        self.assertEqual(page["blocks"][0]["type"], "formula")
+        self.assertEqual(reconciled, records)
 
 
 class AnalyzeTableBlocksTests(unittest.TestCase):
@@ -158,6 +196,90 @@ class AnalyzeTableBlocksTests(unittest.TestCase):
         # presenting fabricated-looking table content next to the warning.
         self.assertEqual(results[0]["analysis"]["status"], "failed")
         self.assertIsNone(results[0]["analysis"]["result"])
+
+    def test_manual_table_keeps_math_cells_when_structure_is_valid(self):
+        page = _page(
+            [{
+                "block_id": "p9_b2",
+                "type": "table",
+                "bbox": [20, 80, 180, 140],
+                "manually_corrected": True,
+            }]
+        )
+        with patch(
+            "src.analysis.table.analyzer.analyze_table_block",
+            return_value={
+                "analysis": {
+                    "status": "success",
+                    "model": {"name": "TableRecognitionPipelineV2", "version": "paddleocr-3.7"},
+                    "confidence": None,
+                    "result": {
+                        "kind": "table",
+                        "row_count": 2,
+                        "column_count": 2,
+                        "cells": [
+                            {"row": 0, "column": 0, "row_span": 1, "column_span": 1, "text": "x", "is_header": False},
+                            {"row": 0, "column": 1, "row_span": 1, "column_span": 1, "text": "y", "is_header": False},
+                            {"row": 1, "column": 0, "row_span": 1, "column_span": 1, "text": "1", "is_header": False},
+                            {"row": 1, "column": 1, "row_span": 1, "column_span": 1, "text": "y=2x", "is_header": False},
+                        ],
+                    },
+                },
+                "warnings": [],
+            },
+        ):
+            results = analyze_table_blocks(page, page_image_path="dummy.png")
+
+        self.assertEqual(results[0]["analysis"]["status"], "success")
+        self.assertIn("y=2x", results[0]["description"]["long_text"])
+
+    def test_manual_table_keeps_sparse_fill_in_table(self):
+        page = _page(
+            [{
+                "block_id": "p8_b11",
+                "type": "table",
+                "bbox": [20, 80, 380, 190],
+                "manually_corrected": True,
+            }]
+        )
+        cells = [
+            {
+                "row": row,
+                "column": column,
+                "row_span": 1,
+                "column_span": 1,
+                "text": text,
+                "is_header": column == 0,
+            }
+            for row, values in enumerate(
+                [
+                    ["x (kWh)", "1", "2", "3", "4"],
+                    ["y (원)", "313", None, None, None],
+                ]
+            )
+            for column, text in enumerate(values)
+        ]
+        with patch(
+            "src.analysis.table.analyzer.analyze_table_block",
+            return_value={
+                "analysis": {
+                    "status": "partial",
+                    "model": {"name": "TableRecognitionPipelineV2", "version": "paddleocr-3.7"},
+                    "confidence": None,
+                    "result": {
+                        "kind": "table",
+                        "row_count": 2,
+                        "column_count": 5,
+                        "cells": cells,
+                    },
+                },
+                "warnings": ["3개 셀의 텍스트를 인식하지 못했습니다."],
+            },
+        ):
+            results = analyze_table_blocks(page, page_image_path="dummy.png")
+
+        self.assertEqual(results[0]["analysis"]["status"], "partial")
+        self.assertEqual(results[0]["analysis"]["result"]["column_count"], 5)
 
     def test_missing_detector_and_score_default_to_null(self):
         page = _page([{"block_id": "p9_b1", "type": "table", "bbox": [0, 0, 10, 10]}])

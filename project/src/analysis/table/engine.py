@@ -48,19 +48,29 @@ def _load_table_engine(lang: str = "korean"):
             "paddleocr is not installed. Run: pip install -r requirements.txt"
         ) from exc
 
-    engine = TableRecognitionPipelineV2(
-        text_detection_model_name="PP-OCRv5_mobile_det",
-        text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
-        device="cpu",
-        # Without this, CPU oneDNN raises "ConvertPirAttribute2RuntimeAttribute
-        # not support [pir::ArrayAttribute<pir::DoubleAttribute>]" for the
-        # SLANeXt table-structure model (paddlepaddle 3.3.1 / paddlex 3.7.2).
-        enable_mkldnn=False,
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_layout_detection=False,
-        use_ocr_model=True,
-    )
+    try:
+        engine = TableRecognitionPipelineV2(
+            text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
+            device="cpu",
+            # Without this, CPU oneDNN raises "ConvertPirAttribute2RuntimeAttribute
+            # not support [pir::ArrayAttribute<pir::DoubleAttribute>]" for the
+            # SLANeXt table-structure model (paddlepaddle 3.3.1 / paddlex 3.7.2).
+            enable_mkldnn=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_layout_detection=False,
+            use_ocr_model=True,
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "requires additional dependencies" in message or "paddlex[ocr]" in message:
+            raise RuntimeError(
+                "표 구조 인식용 PaddleX OCR 의존성이 설치되지 않았습니다. "
+                '`.venv\\Scripts\\python.exe -m pip install "paddlex[ocr]>=3.7.1,<3.8.0"` '
+                "명령으로 설치한 뒤 백엔드를 다시 시작하세요."
+            ) from exc
+        raise
     _ENGINE_CACHE[lang] = engine
     return engine
 

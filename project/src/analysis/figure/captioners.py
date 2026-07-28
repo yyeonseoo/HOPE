@@ -55,6 +55,7 @@ class CaptionOutput:
     model_version: str | None = None
     warnings: list[str] = field(default_factory=list)
     context_block_ids: tuple[str, ...] = ()
+    api_usage: dict[str, Any] | None = None
 
 
 @runtime_checkable
@@ -303,6 +304,7 @@ class ChatGPTCaptioner:
         response = client.chat.completions.create(
             **self._build_request(prompt, image_data_url)
         )
+        api_usage = _openai_usage(response, self.model_name)
         raw_text = (response.choices[0].message.content or "").strip()
         text, claim_warnings = _remove_unsupported_exact_claims(raw_text, evidence)
         text = _postprocess_caption_text(text)
@@ -323,6 +325,10 @@ class ChatGPTCaptioner:
             )
             recovery_response = client.chat.completions.create(
                 **self._build_request(recovery_prompt, image_data_url)
+            )
+            api_usage = _merge_api_usage(
+                api_usage,
+                _openai_usage(recovery_response, self.model_name),
             )
             recovery_raw = (
                 recovery_response.choices[0].message.content or ""
@@ -349,6 +355,7 @@ class ChatGPTCaptioner:
             model_name=f"{self.model_name}-context-aware",
             model_version=self.model_version,
             warnings=warnings,
+            api_usage=api_usage,
         )
 
     def _build_request(self, prompt: str, image_data_url: str) -> dict[str, Any]:
@@ -386,6 +393,49 @@ class ChatGPTCaptioner:
             client_kwargs["api_key"] = self.api_key
         self._client = OpenAI(**client_kwargs)
         return self._client
+
+
+def _openai_usage(response: Any, model_name: str) -> dict[str, Any]:
+    """Normalize SDK usage data and attach a configurable cost estimate."""
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    cached_tokens = int(getattr(prompt_details, "cached_tokens", 0) or 0)
+    input_rate = float(os.environ.get("HOPE_GPT_INPUT_USD_PER_M", "1.25"))
+    cached_rate = float(os.environ.get("HOPE_GPT_CACHED_INPUT_USD_PER_M", "0.125"))
+    output_rate = float(os.environ.get("HOPE_GPT_OUTPUT_USD_PER_M", "10.0"))
+    estimated_cost = (
+        max(0, input_tokens - cached_tokens) * input_rate
+        + cached_tokens * cached_rate
+        + output_tokens * output_rate
+    ) / 1_000_000
+    return {
+        "provider": "openai",
+        "model": model_name,
+        "api_calls": 1,
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "estimated_cost_usd": round(estimated_cost, 8),
+    }
+
+
+def _merge_api_usage(first: Mapping[str, Any], second: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(first)
+    for key in (
+        "api_calls",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "estimated_cost_usd",
+    ):
+        merged[key] = round(float(first.get(key, 0)) + float(second.get(key, 0)), 8)
+        if key != "estimated_cost_usd":
+            merged[key] = int(merged[key])
+    return merged
 
 
 def _image_data_url(image_path: str | Path) -> str:

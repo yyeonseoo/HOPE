@@ -1,4 +1,8 @@
+import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -122,7 +126,7 @@ def recognize_with_optional_pix2tex(crop_path: Optional[str]) -> Optional[str]:
         from PIL import Image
         from pix2tex.cli import LatexOCR
     except Exception:
-        return None
+        return recognize_with_isolated_pix2tex(image_path)
 
     try:
         model = LatexOCR()
@@ -135,6 +139,49 @@ def recognize_with_optional_pix2tex(crop_path: Optional[str]) -> Optional[str]:
         return str(result).strip()
     except Exception:
         return None
+
+
+def recognize_with_isolated_pix2tex(image_path: Path) -> Optional[str]:
+    """Use pix2tex from ``.venv-pix2tex`` without polluting the main venv."""
+
+    project_root = Path(__file__).resolve().parents[3]
+    configured_python = os.getenv("PIX2TEX_PYTHON")
+    if configured_python:
+        python_path = Path(configured_python)
+    elif sys.platform == "win32":
+        python_path = project_root / ".venv-pix2tex" / "Scripts" / "python.exe"
+    else:
+        python_path = project_root / ".venv-pix2tex" / "bin" / "python"
+
+    worker_path = Path(__file__).with_name("pix2tex_worker.py")
+    if not python_path.is_file() or not worker_path.is_file():
+        return None
+
+    try:
+        completed = subprocess.run(
+            [str(python_path), str(worker_path), str(image_path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    prefix = "__PIX2TEX_RESULT__"
+    for line in reversed(completed.stdout.splitlines()):
+        if not line.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(line[len(prefix):])
+        except json.JSONDecodeError:
+            return None
+        latex = payload.get("latex")
+        return str(latex).strip() if latex else None
+
+    return None
 
 def extract_formula_from_model_latex(model_latex: str) -> Optional[str]:
     """

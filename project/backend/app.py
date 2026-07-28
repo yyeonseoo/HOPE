@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import sys
 import tempfile
@@ -26,7 +27,7 @@ from pdf_text import extract_pdf_text_lines
 from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
 from analysis.figure import analyze_figure_blocks, create_openai_figure_engine
-from analysis.table import analyze_table_blocks
+from analysis.table import analyze_table_blocks, reconcile_reclassified_table_blocks
 from page_description import build_page_description
 
 app = FastAPI(title="Textbook Layout Parser API")
@@ -90,6 +91,97 @@ def _count_pages(pdf_path: Path) -> int:
 def _image_data_url(path: Path) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def _save_page_image(uploaded_file: UploadFile, target_dir: Path) -> Path:
+    content_type = (uploaded_file.content_type or "").lower()
+    if content_type and not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="page_image must be an image.")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    image_path = target_dir / "page.png"
+    image_path.write_bytes(uploaded_file.file.read())
+    if not image_path.stat().st_size:
+        raise HTTPException(status_code=400, detail="page_image was empty.")
+    return image_path
+
+
+def _parse_json_form(value: str, field_name: str):
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be valid JSON.") from exc
+
+
+def _ocr_lines_from_page(page: dict) -> list[dict]:
+    return [
+        {
+            "text": block.get("text"),
+            "bbox": block.get("bbox"),
+            "score": block.get("score"),
+        }
+        for block in page.get("blocks", [])
+        if isinstance(block, dict) and block.get("text") and block.get("bbox")
+    ]
+
+
+def _page_for_single_block(page: dict, block_id: str, target_type: str) -> dict:
+    blocks = page.get("blocks")
+    if not isinstance(blocks, list):
+        raise HTTPException(status_code=400, detail="page.blocks must be a list.")
+    if not any(isinstance(block, dict) and block.get("block_id") == block_id for block in blocks):
+        raise HTTPException(status_code=404, detail=f"Block {block_id!r} was not found.")
+
+    if target_type == "figure":
+        # Keep surrounding text blocks for context while ensuring that the
+        # figure analyzer calls GPT for the selected block only.
+        selected_blocks = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            copied = dict(block)
+            if copied.get("block_id") == block_id:
+                copied["type"] = target_type
+            elif copied.get("type") == "figure":
+                copied["type"] = "_context_figure"
+            selected_blocks.append(copied)
+    else:
+        target = next(
+            dict(block)
+            for block in blocks
+            if isinstance(block, dict) and block.get("block_id") == block_id
+        )
+        target["type"] = target_type
+        selected_blocks = [target]
+    return {**page, "blocks": selected_blocks}
+
+
+def _analysis_description_text(record: dict) -> str | None:
+    description = record.get("description")
+    if not isinstance(description, dict):
+        return None
+    return description.get("long_text") or description.get("short_text")
+
+
+def _summarize_api_usage(records: list[dict]) -> dict | None:
+    usages = [record.get("api_usage") for record in records if isinstance(record.get("api_usage"), dict)]
+    if not usages:
+        return None
+    summary = {
+        "provider": "openai",
+        "model": usages[0].get("model"),
+        "api_calls": 0,
+        "input_tokens": 0,
+        "cached_input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    for usage in usages:
+        for key in ("api_calls", "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"):
+            summary[key] += int(usage.get(key, 0) or 0)
+        summary["estimated_cost_usd"] += float(usage.get("estimated_cost_usd", 0) or 0)
+    summary["estimated_cost_usd"] = round(summary["estimated_cost_usd"], 8)
+    return summary
 
 
 def _analyze_saved_pdf(
@@ -183,6 +275,10 @@ async def analyze_page(
         semantic_analyses.extend(
             analyze_table_blocks(result["page"], str(result["page_image_path"]))
         )
+        semantic_analyses = reconcile_reclassified_table_blocks(
+            result["page"],
+            semantic_analyses,
+        )
         figure_engine = _get_figure_engine(figure_captioning)
         if figure_engine is not None:
             async with _FIGURE_ANALYSIS_LOCK:
@@ -213,4 +309,64 @@ async def analyze_page(
             "layout_mode": result["layout_mode"],
             "figure_captioning_enabled": figure_engine is not None,
             "figure_caption_model": figure_engine.captioner.model_name if figure_engine is not None else None,
+            "api_usage": _summarize_api_usage(semantic_analyses),
         }
+
+
+@app.post("/api/analyze-block")
+async def analyze_block(
+    page_image: UploadFile = File(...),
+    page_json: str = Form(...),
+    semantic_analyses_json: str = Form("[]"),
+    block_id: str = Form(...),
+    target_type: str = Form(...),
+):
+    """Reanalyze one manually retyped block without rerunning the page."""
+    if target_type not in {"figure", "table", "formula"}:
+        raise HTTPException(status_code=400, detail="target_type must be figure, table, or formula.")
+
+    page = _parse_json_form(page_json, "page_json")
+    semantic_analyses = _parse_json_form(semantic_analyses_json, "semantic_analyses_json")
+    if not isinstance(page, dict) or not isinstance(semantic_analyses, list):
+        raise HTTPException(status_code=400, detail="Invalid page or semantic analysis data.")
+
+    with tempfile.TemporaryDirectory(prefix="textbook_block_analysis_") as tmp:
+        image_path = _save_page_image(page_image, Path(tmp))
+        analysis_page = _page_for_single_block(page, block_id, target_type)
+        existing = [
+            item for item in semantic_analyses
+            if isinstance(item, dict) and item.get("block_id") != block_id
+        ]
+        try:
+            if target_type == "formula":
+                records = await asyncio.to_thread(
+                    analyze_formula_blocks, analysis_page, str(image_path)
+                )
+            elif target_type == "table":
+                records = await asyncio.to_thread(
+                    analyze_table_blocks, analysis_page, str(image_path)
+                )
+            else:
+                figure_engine = _get_figure_engine(True)
+                async with _FIGURE_ANALYSIS_LOCK:
+                    records = await asyncio.to_thread(
+                        analyze_figure_blocks,
+                        analysis_page,
+                        image_path,
+                        figure_engine,
+                        None,
+                        _ocr_lines_from_page(page),
+                        existing,
+                    )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Block analysis failed: {exc}") from exc
+
+    if not records:
+        raise HTTPException(status_code=500, detail="The selected block did not produce an analysis.")
+    record = records[0]
+    return {
+        "analysis": record,
+        "description_text": _analysis_description_text(record),
+        "api_usage": record.get("api_usage"),
+        "analysis_engine": "openai" if target_type == "figure" else "local",
+    }

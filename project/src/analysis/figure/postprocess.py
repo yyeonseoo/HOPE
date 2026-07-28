@@ -34,6 +34,7 @@ _ADDITIVE_RECORD_KEYS = (
     "context_used",
     "prompt_trace",
     "type_signals",
+    "api_usage",
 )
 
 
@@ -86,6 +87,8 @@ def build_context_aware_figure_record(
         classifier_confidence=classifier_confidence,
         evidence=evidence,
     )
+    if description.api_usage:
+        normalized["api_usage"] = dict(description.api_usage)
     if prompt_trace is not None:
         normalized["prompt_trace"] = prompt_trace.to_dict()
     if type_signals is not None and type_signals.has_any():

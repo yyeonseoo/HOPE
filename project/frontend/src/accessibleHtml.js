@@ -60,6 +60,13 @@ function descriptionText(analysis) {
   ).trim();
 }
 
+function isOmittedFigure(analysis) {
+  return (
+    analysis?.braille_review?.visual_treatment
+    || analysis?.braille_review?.production_mode
+  ) === "omit";
+}
+
 function safeMathMl(value) {
   const mathml = String(value || "").trim();
   if (!/^<math(?:\s|>)/i.test(mathml)) return "";
@@ -165,10 +172,22 @@ function genericBlockHtml(block) {
 function pageDescriptionHtml(result, pageId) {
   const description = String(result?.page_description?.text || "").trim();
   if (!description) return "";
+  const analyses = Array.isArray(result?.semantic_analyses) ? result.semantic_analyses : [];
+  const analysisByBlock = new Map(analyses.map((item) => [item.block_id, item]));
+  const figureBlocks = sortBlocksForBrailleReading(result?.page?.blocks || [])
+    .filter((block) => block.type === "figure");
+  let figureOffset = 0;
   const lines = description.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
   const content = lines.map((line) => {
     const match = line.match(/^\[([a-z_]+)\]\s*/i);
     const type = match?.[1]?.toLowerCase();
+    if (type === "figure") {
+      const figureBlock = figureBlocks[figureOffset];
+      figureOffset += 1;
+      if (figureBlock && isOmittedFigure(analysisByBlock.get(figureBlock.block_id))) {
+        return "";
+      }
+    }
     const text = match ? line.slice(match[0].length).trim() : line;
     if (!text) return "";
     const label = DESCRIPTION_LABELS[type];
@@ -201,6 +220,7 @@ function pageHtml(result, includePageImages) {
     if (block.type === "formula") return formulaHtml(analysis, blockText(block));
     if (block.type === "table") return tableHtml(analysis, blockText(block));
     if (block.type === "figure") {
+      if (isOmittedFigure(analysis)) return "";
       figureIndex += 1;
       const sourceCaption = blockText(captionByFigureId.get(block.block_id));
       return figureHtml(analysis, blockText(block), pageId, figureIndex, sourceCaption);

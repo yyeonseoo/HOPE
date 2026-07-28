@@ -85,6 +85,55 @@ def analyze_table_blocks(
     return results
 
 
+def reconcile_reclassified_table_blocks(
+    page: Dict[str, Any],
+    semantic_analyses: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Synchronize formula blocks that the table analyzer confirmed as tables.
+
+    Table reclassification originally changed only the semantic-analysis
+    record. The source page block therefore remained ``formula``, producing
+    contradictory UI counts such as "formula 1 / table 0" while a table was
+    displayed. Promote only blocks that were originally formulas and have a
+    real table analysis, then remove the stale formula analysis for the same
+    block. Native table blocks and unrelated records are left untouched.
+    """
+    blocks = page.get("blocks")
+    if not isinstance(blocks, list):
+        return semantic_analyses
+
+    table_analysis_ids = {
+        str(record.get("block_id"))
+        for record in semantic_analyses
+        if record.get("type") == "table"
+        and record.get("block_id") is not None
+        and (record.get("analysis") or {}).get("status") != "failed"
+    }
+    reclassified_ids = {
+        str(block.get("block_id"))
+        for block in blocks
+        if block.get("type") == "formula"
+        and block.get("block_id") is not None
+        and str(block.get("block_id")) in table_analysis_ids
+    }
+    if not reclassified_ids:
+        return semantic_analyses
+
+    for block in blocks:
+        if str(block.get("block_id")) in reclassified_ids:
+            block["original_type"] = block.get("type")
+            block["type"] = "table"
+
+    return [
+        record
+        for record in semantic_analyses
+        if not (
+            str(record.get("block_id")) in reclassified_ids
+            and record.get("type") != "table"
+        )
+    ]
+
+
 def _analyze_single_table_block(
     page_id: Optional[int],
     block: Dict[str, Any],
@@ -105,12 +154,19 @@ def _analyze_single_table_block(
             "warnings": ["페이지 이미지 또는 bbox가 없어 표 구조 인식을 실행하지 못했습니다."],
         }
 
-    output = _flag_if_not_a_real_table(output)
+    output = _flag_if_not_a_real_table(
+        output,
+        trust_manual_type=bool(block.get("manually_corrected")),
+    )
 
     return _assemble_table_record(page_id, block, blocks, block_index, bbox, page_image_path, output)
 
 
-def _flag_if_not_a_real_table(output: Dict[str, Any]) -> Dict[str, Any]:
+def _flag_if_not_a_real_table(
+    output: Dict[str, Any],
+    *,
+    trust_manual_type: bool = False,
+) -> Dict[str, Any]:
     """For blocks the layout model already tagged `table` (unlike the
     figure/formula reclassification path, we can't just drop these -- the
     schema requires a `table`-type record for them), downgrade to a
@@ -127,7 +183,34 @@ def _flag_if_not_a_real_table(output: Dict[str, Any]) -> Dict[str, Any]:
     """
     if output["analysis"].get("status") == "failed":
         return output
-    if _looks_like_real_table(output["analysis"]):
+
+    # A block that the reviewer explicitly changed to `table` is
+    # authoritative. Textbook exercises commonly contain intentionally
+    # blank cells, so applying the sparse-grid heuristic here used to turn
+    # a correctly recognized partial table back into a total failure.
+    if trust_manual_type:
+        return output
+
+    # For a block the layout detector already classified as a table, the
+    # table engine only needs to have recovered a genuine grid. Content
+    # density and formula-like cell text are not rejection criteria here:
+    # fill-in tables are intentionally sparse and mathematics tables
+    # naturally contain x, y, and equations. The stricter filled-ratio and
+    # content-signal checks remain in `_try_reclassify_as_table`, where they
+    # are needed to prevent formula/graph blocks from being promoted.
+    analysis = output["analysis"]
+    result = analysis.get("result") or {}
+    if (
+        result.get("row_count", 0) >= _MIN_RECLASSIFIED_ROWS
+        and result.get("column_count", 0) >= _MIN_RECLASSIFIED_COLUMNS
+        and result.get("cells")
+    ):
+        return output
+
+    if _looks_like_real_table(
+        analysis,
+        reject_content_signals=True,
+    ):
         return output
 
     model = output["analysis"]["model"]
@@ -154,10 +237,10 @@ def _try_reclassify_as_table(
     or None if the caller should leave the block under its original type --
     e.g. it really was a formula, or the crop/engine failed.
 
-    This is a table-branch-only prototype (see OWNERSHIP.md): it does not
-    touch the shared layout postprocessing in page_pipeline.py, so
-    reclassified blocks only ever show up here, in `semantic_analyses` --
-    `page["blocks"]` itself is untouched and still says `formula`.
+    This function itself does not mutate the shared page structure. The API
+    integration calls `reconcile_reclassified_table_blocks` after all table
+    records are assembled so a confirmed promotion is reflected consistently
+    in both `page["blocks"]` and `semantic_analyses`.
     """
     bbox = block.get("bbox")
     if not page_image_path or not bbox:
@@ -189,7 +272,10 @@ def _try_reclassify_as_table(
 
 
 def _looks_like_real_table(
-    analysis: Dict[str, Any], min_filled_ratio: float = _MIN_RECLASSIFIED_FILLED_RATIO
+    analysis: Dict[str, Any],
+    min_filled_ratio: float = _MIN_RECLASSIFIED_FILLED_RATIO,
+    *,
+    reject_content_signals: bool = True,
 ) -> bool:
     """Confidence bar for reclassifying a non-table block as a table: a
     non-failed status, at least a 2x2 grid, and most cells actually filled
@@ -229,11 +315,12 @@ def _looks_like_real_table(
     # much more likely the table engine misreading a figure's annotations
     # than an actual missed table -- reuses feature/formula-analysis's own
     # formula-signal detector rather than re-deriving the same patterns.
-    if any(contains_formula_signal(cell["text"]) for cell in filled_cells):
-        return False
+    if reject_content_signals:
+        if any(contains_formula_signal(cell["text"]) for cell in filled_cells):
+            return False
 
-    if any(_contains_graph_axis_label(cell["text"]) for cell in filled_cells):
-        return False
+        if any(_contains_graph_axis_label(cell["text"]) for cell in filled_cells):
+            return False
 
     return True
 

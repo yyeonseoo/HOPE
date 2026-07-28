@@ -1,4 +1,5 @@
 .venv/
+.venv-pix2tex/
 __pycache__/
 *.py[cod]
 

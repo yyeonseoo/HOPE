@@ -15,6 +15,7 @@ class GeneratedDescription:
     model_name: str
     model_version: str | None
     warnings: list[str] = field(default_factory=list)
+    api_usage: dict[str, Any] | None = None
 
 
 class FigureDescriptionGenerator:
@@ -50,4 +51,5 @@ class FigureDescriptionGenerator:
             model_name=output.model_name,
             model_version=output.model_version,
             warnings=list(output.warnings),
+            api_usage=output.api_usage,
         )

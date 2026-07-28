@@ -1,0 +1,3 @@
+# Keep pix2tex isolated from the main environment because it pins timm==0.5.4,
+# while OpenCLIP requires a modern timm release.
+pix2tex==0.1.4
