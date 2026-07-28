@@ -1212,6 +1212,7 @@ function PageDescriptionView({
   const editorRef = useRef(null);
   const cursorCueTimerRef = useRef(null);
   const tagWarningTimerRef = useRef(null);
+
   useEffect(() => {
     setSelectedFigure(null);
     setSelectedBlock(null);
@@ -1221,7 +1222,27 @@ function PageDescriptionView({
     setReviewerName(
       description?.review?.reviewer || loadLocalValue("hope-reviewer-name", ""),
     );
-  }, [result, description?.text]);
+  }, [result.page_image, result.page?.page_id]);
+
+  useEffect(() => {
+    const nextDraft = description?.text || "";
+    setDraft(nextDraft);
+    if (editing && selectedBlock) {
+      window.requestAnimationFrame(() => focusBlockInEditor(selectedBlock, nextDraft));
+    }
+  }, [description?.text]);
+
+  useEffect(() => {
+    if (!selectedBlock) return;
+    const refreshedBlock = result.page?.blocks?.find(
+      (block) => block.block_id === selectedBlock.block_id,
+    );
+    if (!refreshedBlock) {
+      setSelectedBlock(null);
+      return;
+    }
+    if (refreshedBlock !== selectedBlock) setSelectedBlock(refreshedBlock);
+  }, [result.page?.blocks, selectedBlock?.block_id]);
 
   useEffect(() => () => {
     window.clearTimeout(cursorCueTimerRef.current);
@@ -1257,66 +1278,68 @@ function PageDescriptionView({
     });
   }
 
-  function beginBlockEdit(block) {
-    setSelectedBlock(block);
-    setEditing(true);
+  function focusBlockInEditor(block, sourceText = draft) {
     const sameTypeBlocks = sortBlocksForBrailleReading(result.page?.blocks || [])
       .filter((item) => item.type === block.type);
     const blockIndex = Math.max(0, sameTypeBlocks.findIndex((item) => item.block_id === block.block_id));
     const tokenPattern = new RegExp(`\\[${block.type}\\]`, "gi");
-    const matches = [...draft.matchAll(tokenPattern)];
+    const matches = [...String(sourceText || "").matchAll(tokenPattern)];
     const match = matches[blockIndex] || matches[0];
-    const selectionStart = match ? match.index + match[0].length : draft.length;
-    const leadingWhitespace = draft.slice(selectionStart).match(/^\s*/)?.[0].length || 0;
+    const selectionStart = match ? match.index + match[0].length : String(sourceText || "").length;
+    const leadingWhitespace = String(sourceText || "").slice(selectionStart).match(/^\s*/)?.[0].length || 0;
     const cursorPosition = selectionStart + leadingWhitespace;
     window.clearTimeout(cursorCueTimerRef.current);
     setCursorCueVisible(false);
-    window.requestAnimationFrame(() => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      editor.focus();
-      editor.setSelectionRange(cursorPosition, cursorPosition);
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    editor.setSelectionRange(cursorPosition, cursorPosition);
 
-      const computedStyle = window.getComputedStyle(editor);
-      const mirror = document.createElement("div");
-      const caretMarker = document.createElement("span");
-      const mirroredProperties = [
-        "fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing", "lineHeight",
-        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-        "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
-      ];
-      mirroredProperties.forEach((property) => {
-        mirror.style[property] = computedStyle[property];
-      });
-      const mirrorBorderWidth = (
-        (Number.parseFloat(computedStyle.borderLeftWidth) || 0)
-        + (Number.parseFloat(computedStyle.borderRightWidth) || 0)
-      );
-      mirror.style.borderStyle = "solid";
-      mirror.style.boxSizing = "border-box";
-      mirror.style.overflowWrap = "break-word";
-      mirror.style.position = "fixed";
-      mirror.style.visibility = "hidden";
-      mirror.style.whiteSpace = "pre-wrap";
-      mirror.style.width = `${editor.clientWidth + mirrorBorderWidth}px`;
-      mirror.style.wordBreak = "break-word";
-      mirror.textContent = draft.slice(0, cursorPosition);
-      caretMarker.textContent = "\u200b";
-      mirror.appendChild(caretMarker);
-      document.body.appendChild(mirror);
-
-      const caretTop = caretMarker.offsetTop;
-      const targetScrollTop = Math.max(0, caretTop - editor.clientHeight * 0.3);
-      editor.scrollTop = targetScrollTop;
-      setCursorCueTop(Math.max(
-        editor.offsetTop + 8,
-        editor.offsetTop + caretTop - editor.scrollTop,
-      ));
-      setCursorCueVisible(true);
-      cursorCueTimerRef.current = window.setTimeout(() => setCursorCueVisible(false), 2200);
-      mirror.remove();
-      editor.scrollIntoView({ behavior: "smooth", block: "center" });
+    const computedStyle = window.getComputedStyle(editor);
+    const mirror = document.createElement("div");
+    const caretMarker = document.createElement("span");
+    const mirroredProperties = [
+      "fontFamily", "fontSize", "fontWeight", "fontStyle", "letterSpacing", "lineHeight",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+    ];
+    mirroredProperties.forEach((property) => {
+      mirror.style[property] = computedStyle[property];
     });
+    const mirrorBorderWidth = (
+      (Number.parseFloat(computedStyle.borderLeftWidth) || 0)
+      + (Number.parseFloat(computedStyle.borderRightWidth) || 0)
+    );
+    mirror.style.borderStyle = "solid";
+    mirror.style.boxSizing = "border-box";
+    mirror.style.overflowWrap = "break-word";
+    mirror.style.position = "fixed";
+    mirror.style.visibility = "hidden";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.width = `${editor.clientWidth + mirrorBorderWidth}px`;
+    mirror.style.wordBreak = "break-word";
+    mirror.textContent = String(sourceText || "").slice(0, cursorPosition);
+    caretMarker.textContent = "\u200b";
+    mirror.appendChild(caretMarker);
+    document.body.appendChild(mirror);
+
+    const caretTop = caretMarker.offsetTop;
+    const targetScrollTop = Math.max(0, caretTop - editor.clientHeight * 0.3);
+    editor.scrollTop = targetScrollTop;
+    setCursorCueTop(Math.max(
+      editor.offsetTop + 8,
+      editor.offsetTop + caretTop - editor.scrollTop,
+    ));
+    setCursorCueVisible(true);
+    cursorCueTimerRef.current = window.setTimeout(() => setCursorCueVisible(false), 2200);
+    mirror.remove();
+    editor.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function beginBlockEdit(block) {
+    setSelectedBlock(block);
+    setEditing(true);
+    window.requestAnimationFrame(() => focusBlockInEditor(block, draft));
   }
 
   function rejectProtectedTagEdit(attemptedPosition) {
@@ -1774,6 +1797,7 @@ export default function App() {
   const layoutModel = "doclayout_yolo";
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
+  const [analysisJob, setAnalysisJob] = useState(null);
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState("layout");
   const [activeElementType, setActiveElementType] = useState("formula");
@@ -1807,6 +1831,16 @@ export default function App() {
   const projectFileInputRef = useRef(null);
   const resultWorkspaceRef = useRef(null);
   const libraryUtilityMenuRef = useRef(null);
+  const activeProjectIdRef = useRef(activeProjectId);
+  const pageNumberRef = useRef(pageNumber);
+
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    pageNumberRef.current = pageNumber;
+  }, [pageNumber]);
 
   useEffect(() => {
     function syncFullscreenState() {
@@ -1880,17 +1914,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (status !== "counting" && status !== "analyzing") {
+    if (status !== "counting" && !analysisJob) {
       setElapsedSeconds(0);
       return undefined;
     }
-    const startedAt = Date.now();
+    const startedAt = analysisJob?.startedAt || Date.now();
     setElapsedSeconds(0);
     const timer = window.setInterval(() => {
       setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [status]);
+  }, [status, analysisJob]);
 
   useEffect(() => {
     window.localStorage.setItem(LIBRARY_META_KEY, JSON.stringify(libraryMeta));
@@ -2054,35 +2088,68 @@ export default function App() {
 
   async function analyzePage() {
     if (!file) { setError("먼저 PDF를 업로드하세요."); return; }
-    setStatus("analyzing"); setError(""); setResult(null);
+    if (analysisJob) return;
+    const targetProjectId = activeProjectId;
+    const targetPageNumber = pageNumber;
+    const targetDpi = dpi;
+    const targetLayoutModel = layoutModel;
+    const targetFile = file;
+    setAnalysisJob({
+      projectId: targetProjectId,
+      pageNumber: targetPageNumber,
+      startedAt: Date.now(),
+    });
+    setError("");
+    const previousTargetPage = savedPages.find(
+      (savedPage) => savedPage.pageNumber === targetPageNumber,
+    );
+    setResult(previousTargetPage?.result || null);
+    setResultOwnerId(previousTargetPage ? targetProjectId : null);
     const formData = new FormData();
-    formData.append("file", file); formData.append("page_number", String(pageNumber));
-    formData.append("dpi", String(dpi)); formData.append("lang", "korean"); formData.append("layout_model", layoutModel);
+    formData.append("file", targetFile); formData.append("page_number", String(targetPageNumber));
+    formData.append("dpi", String(targetDpi)); formData.append("lang", "korean"); formData.append("layout_model", targetLayoutModel);
     formData.append("figure_captioning", "true");
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, { method: "POST", body: formData });
       if (!response.ok) throw new Error(await parseError(response));
       const payload = await response.json();
-      setResult(payload);
-      setResultOwnerId(activeProjectId);
-      setPageCount(payload.page_count);
-      setActiveView("layout");
 
-      if (activeProjectId) {
-        const savedPage = await saveWorkspacePage(activeProjectId, pageNumber, payload, { dpi, layoutModel });
-        setSavedPages((current) => (
-          [...current.filter((page) => page.pageNumber !== pageNumber), savedPage]
-            .sort((a, b) => a.pageNumber - b.pageNumber)
-        ));
+      if (targetProjectId) {
+        const savedPage = await saveWorkspacePage(
+          targetProjectId,
+          targetPageNumber,
+          payload,
+          { dpi: targetDpi, layoutModel: targetLayoutModel },
+        );
+        const targetPages = await listSavedPages(targetProjectId);
+        if (activeProjectIdRef.current === targetProjectId) {
+          setSavedPages(targetPages);
+        }
         setProjectPageCounts((current) => ({
           ...current,
-          [activeProjectId]: new Set([...savedPages.map((page) => page.pageNumber), pageNumber]).size,
+          [targetProjectId]: targetPages.length,
         }));
         setProjects((current) => current.map((project) => (
-          project.id === activeProjectId ? { ...project, updatedAt: savedPage.savedAt } : project
+          project.id === targetProjectId ? { ...project, updatedAt: savedPage.savedAt } : project
         )));
       }
-    } catch (err) { setError(err.message); } finally { setStatus("idle"); }
+
+      if (
+        activeProjectIdRef.current === targetProjectId
+        && pageNumberRef.current === targetPageNumber
+      ) {
+        setResult(payload);
+        setResultOwnerId(targetProjectId);
+        setPageCount(payload.page_count);
+        setActiveView("layout");
+      }
+      showToast(`${targetPageNumber}페이지 분석이 완료되었어요.`);
+    } catch (err) {
+      if (activeProjectIdRef.current === targetProjectId) setError(err.message);
+      showToast(`${targetPageNumber}페이지 분석에 실패했어요.`, "error");
+    } finally {
+      setAnalysisJob(null);
+    }
   }
 
   useEffect(() => {
@@ -2559,7 +2626,12 @@ export default function App() {
     });
   }
 
-  const busy = status === "counting" || status === "analyzing";
+  const busy = status === "counting" || Boolean(analysisJob);
+  const activeProjectIsAnalyzing = analysisJob?.projectId === activeProjectId;
+  const currentPageIsAnalyzing = activeProjectIsAnalyzing
+    && analysisJob?.pageNumber === pageNumber;
+  const showProcessingState = status === "counting"
+    || (currentPageIsAnalyzing && !result);
   const activeProjects = projects.filter((project) => !libraryMeta[project.id]?.trashed);
   const trashedProjects = projects.filter((project) => libraryMeta[project.id]?.trashed);
   const groupedProjects = activeGroup === "trash"
@@ -3423,8 +3495,14 @@ export default function App() {
             <div className="page-count"><span>전체 페이지</span><strong>{pageCount ?? "-"}</strong></div>
           </div>
           <button className="primary-button" disabled={busy || !file} onClick={analyzePage}>
-            <span>{status === "analyzing" ? "분석 중" : "페이지 분석 시작"}</span>
-            <span aria-hidden="true">{status === "analyzing" ? "···" : "→"}</span>
+            <span>
+              {analysisJob
+                ? activeProjectIsAnalyzing
+                  ? `${analysisJob.pageNumber}페이지 분석 중`
+                  : "다른 교과서 분석 중"
+                : "페이지 분석 시작"}
+            </span>
+            <span aria-hidden="true">{analysisJob ? "···" : "→"}</span>
           </button>
           {error && <div className="error-box">{error}</div>}
           {activeProjectId && (
@@ -3566,7 +3644,12 @@ export default function App() {
               </button>
             )}
           </nav>
-          {busy ? <ProcessingState status={status} elapsedSeconds={elapsedSeconds} /> : !result ? (
+          {showProcessingState ? (
+            <ProcessingState
+              status={status === "counting" ? "counting" : "analyzing"}
+              elapsedSeconds={elapsedSeconds}
+            />
+          ) : !result ? (
             <div className="empty-state result-empty">
               <div className="empty-illustration" aria-hidden="true"><span /><span /><span /></div>
               <h2>분석 결과가 여기에 표시됩니다</h2>
