@@ -7,6 +7,8 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from PIL import Image
 
+from .captioners import _import_torch, _resolve_device
+
 
 TYPE_PROMPTS = {
     "graph": ("an x y graph with coordinate axes and plotted data",),
@@ -102,23 +104,3 @@ class OpenCLIPFigureTypeClassifier:
         self._tokenizer = open_clip.get_tokenizer(model_ref)
 
 
-# Backwards-compatible import name for callers created before five-way routing.
-OpenCLIPGraphImageClassifier = OpenCLIPFigureTypeClassifier
-
-
-def _import_torch() -> Any:
-    try:
-        import torch
-    except ImportError as exc:
-        raise RuntimeError("OpenCLIP routing requires PyTorch.") from exc
-    return torch
-
-
-def _resolve_device(torch: Any, requested: str) -> str:
-    if requested == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if requested.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError(f"CUDA device {requested!r} was requested but CUDA is not available.")
-    if requested != "cpu" and not requested.startswith("cuda"):
-        raise ValueError("device must be 'auto', 'cpu', or a CUDA device such as 'cuda:0'.")
-    return requested

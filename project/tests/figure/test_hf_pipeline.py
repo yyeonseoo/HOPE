@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from src.analysis.figure.captioners import CaptionOutput, ChatGPTCaptioner, Florence2ImageCaptioner
+from src.analysis.figure.captioners import CaptionOutput, ChatGPTCaptioner
 from src.analysis.figure.hf_pipeline import HuggingFaceFigureCaptionEngine, create_openai_figure_engine
 from src.analysis.figure.openclip_classifier import RoutePrediction
 
@@ -193,46 +193,6 @@ class HuggingFacePipelineTests(unittest.TestCase):
         self.assertIsNone(engine.classifier._model)
         self.assertEqual(engine.grounding_scorer.device_request, "cpu")
         self.assertIsNone(engine.grounding_scorer._model)
-
-    def test_florence_loader_uses_native_class_without_remote_code(self):
-        calls = {}
-
-        class FakeLoadedModel:
-            def to(self, device):
-                calls["device"] = device
-                return self
-
-            def eval(self):
-                calls["eval"] = True
-
-        class FakeModelClass:
-            @classmethod
-            def from_pretrained(cls, model_name, **kwargs):
-                calls["model"] = (model_name, kwargs)
-                return FakeLoadedModel()
-
-        class FakeProcessorClass:
-            @classmethod
-            def from_pretrained(cls, model_name, **kwargs):
-                calls["processor"] = (model_name, kwargs)
-                return object()
-
-        fake_transformers = SimpleNamespace(
-            AutoProcessor=FakeProcessorClass,
-            Florence2ForConditionalGeneration=FakeModelClass,
-        )
-        fake_torch = SimpleNamespace(float16="float16", float32="float32")
-        captioner = Florence2ImageCaptioner(device="cpu", revision="test-revision")
-
-        with patch.dict("sys.modules", {"transformers": fake_transformers}):
-            captioner._load(fake_torch)
-
-        self.assertEqual(calls["model"][0], "florence-community/Florence-2-base")
-        self.assertEqual(calls["model"][1]["dtype"], "float32")
-        self.assertNotIn("trust_remote_code", calls["model"][1])
-        self.assertNotIn("trust_remote_code", calls["processor"][1])
-        self.assertEqual(calls["processor"][1]["revision"], "test-revision")
-        self.assertTrue(calls["eval"])
 
 
 if __name__ == "__main__":

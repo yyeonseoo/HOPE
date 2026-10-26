@@ -85,7 +85,7 @@ $env:HOPE_FIGURE_GPT_TIMEOUT_SECONDS="60"         # 생략 시 60초
 $env:HOPE_FIGURE_GPT_MAX_RETRIES="3"              # 생략 시 3회(OpenAI SDK가 429/5xx/연결 오류에 지수 백오프로 재시도)
 ```
 
-`analysis.confidence`에는 OpenCLIP의 선택 route 확률을, `description.confidence`에는 생성 토큰 확률의 기하평균을 기록합니다. 후자는 보정된 신뢰도가 아닙니다. 실제 생성 시간은 `description.generation_time_seconds`에 초 단위로 저장됩니다.
+`analysis.confidence`에는 OpenCLIP의 선택 route 확률을, `description.confidence`는 GPT API가 확률을 주지 않으므로 `null`입니다. 실제 생성 시간은 `description.generation_time_seconds`에 초 단위로 저장됩니다.
 
 ## Files
 
@@ -95,37 +95,4 @@ $env:HOPE_FIGURE_GPT_MAX_RETRIES="3"              # 생략 시 3회(OpenAI SDK�
 - `classifier.py`: 모델 분류명을 공통 figure 유형으로 정규화
 - `normalize.py`: 축·계열·데이터와 confidence를 공통 스키마로 정규화
 
-기본 분석기는 특정 모델 없이도 동작하며 이 경우 `unknown/partial`을 반환합니다. 실제 모델은 아래 adapter처럼 선택적으로 연결하고, 동일한 정답 crop 평가셋에서 후보별 성능을 비교합니다.
-
-## PP-Chart2Table Baseline
-
-`PPChart2TableEngine`은 PaddleOCR의 `PP-Chart2Table` 모델을 사용해 그래프 crop을 표 형태의 데이터로 변환합니다.
-
-```python
-from src.analysis.figure import PPChart2TableEngine, analyze_figure_blocks
-
-results = analyze_figure_blocks(page, page_image_path, engine=PPChart2TableEngine())
-```
-
-이 모델은 그래프 데이터 추출 전용입니다. 사진과 일반 삽화 설명에는 사용하지 않으며, 시각적 그래프 유형을 신뢰성 있게 반환하지 않으므로 `figure_type`은 `other`로 보존합니다. 최초 실행 시 약 1.4GB 모델을 내려받고 CPU에서는 오래 걸릴 수 있습니다.
-
-로컬 모델 경로:
-
-```text
-project/.cache/models/PP-Chart2Table/
-```
-
-추가 실행 의존성은 `tiktoken`입니다. 공용 `requirements.txt` 반영은 통합 담당자가 결정합니다. 2026-07-05 CPU 환경에서 216x200 픽셀 그래프 한 장에 1,255초가 걸렸고 축과 데이터 계열을 추출하지 못했습니다. 따라서 이 샘플 기준으로는 채택하지 않으며 비교 실험 기록으로만 남깁니다.
-
-## Native PDF Vector Baseline
-
-`analyze_pdf_vector_figure`는 텍스트 PDF에 저장된 글자 좌표와 벡터 경로를 PyMuPDF로 직접 읽습니다. OCR이나 대형 모델을 사용하지 않으며, 축 위치와 색이 있는 데이터 경로에 대한 일반적인 기하 규칙을 적용합니다. 특정 교과서 문구나 페이지 번호에 맞춘 규칙은 사용하지 않습니다.
-
-2026-07-06 새 교과서 1페이지의 시간-거리 그래프에서 `시간`, `거리`, 계열 `A`, `B`를 추출하고 다음 문맥 없는 설명을 생성했습니다.
-
-```text
-세로축은 거리, 가로축은 시간을 나타낸 선그래프.
-A는 증가한다. B는 증가한 뒤 일정하게 유지된 뒤 증가한다.
-```
-
-이 방식은 텍스트·벡터 PDF에 한정됩니다. 스캔 이미지나 래스터 그래프는 별도 모델이 필요하며, 눈금이 없으면 임의 수치를 생성하지 않고 변화 형태만 설명합니다.
+기본 분석기는 특정 모델 없이도 동작하며 이 경우 `unknown/partial`을 반환합니다.
