@@ -11,6 +11,7 @@ const {
   brailleReadingWarnings,
   linkedFigureCaptions,
   moveBrailleReadingGroup,
+  normalizeTaggedPageDescription,
   placeBrailleReadingGroup,
   reorderTaggedPageDescription,
   sortBlocksForBrailleReading,
@@ -72,6 +73,15 @@ test("reorders tagged accessibility-page lines while preserving untagged text", 
   assert.equal(reordered, "페이지 안내\n[figure] 그림 설명\n[paragraph] 본문");
 });
 
+test("collapses wrapped caption OCR into one tagged block", () => {
+  assert.equal(
+    normalizeTaggedPageDescription(
+      "[caption]\n[출\n처:\n한국\n거래\n소,\n2016]\n[paragraph] 다음 문장",
+    ),
+    "[caption] [출 처: 한국 거래 소, 2016]\n[paragraph] 다음 문장",
+  );
+});
+
 test("moves a figure and its linked caption as one reading group", () => {
   const blocks = [
     { block_id: "paragraph", type: "paragraph", reading_order: 1 },
@@ -89,6 +99,25 @@ test("moves a figure and its linked caption as one reading group", () => {
   assert.deepEqual(
     sortBlocksForBrailleReading(moved).map((block) => block.block_id),
     ["figure", "caption", "paragraph"],
+  );
+});
+
+test("allows a linked caption to move independently when selected directly", () => {
+  const blocks = [
+    { block_id: "paragraph", type: "paragraph", reading_order: 1 },
+    { block_id: "figure", type: "figure", reading_order: 2 },
+    { block_id: "caption", type: "caption", reading_order: 3 },
+  ];
+  const analyses = [{
+    block_id: "figure",
+    type: "figure",
+    context: { caption_block_id: "caption" },
+  }];
+
+  const moved = moveBrailleReadingGroup(blocks, analyses, "caption", "up");
+  assert.deepEqual(
+    sortBlocksForBrailleReading(moved).map((block) => block.block_id),
+    ["paragraph", "caption", "figure"],
   );
 });
 

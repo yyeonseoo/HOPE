@@ -68,8 +68,22 @@ function readingGroups(blocks = [], analyses = []) {
     });
 }
 
-export function moveBrailleReadingGroup(blocks = [], analyses = [], blockId, direction) {
+function readingGroupsForInteraction(blocks = [], analyses = [], ...blockIds) {
   const groups = readingGroups(blocks, analyses);
+  const requiresIndependentBlocks = blockIds.some((blockId) => (
+    blockId
+    && groups.some((group) => (
+      group.some((block) => block.block_id === blockId)
+      && group[0]?.block_id !== blockId
+    ))
+  ));
+  return requiresIndependentBlocks
+    ? sortBlocksForBrailleReading(blocks).map((block) => [block])
+    : groups;
+}
+
+export function moveBrailleReadingGroup(blocks = [], analyses = [], blockId, direction) {
+  const groups = readingGroupsForInteraction(blocks, analyses, blockId);
   const currentIndex = groups.findIndex((group) => group[0]?.block_id === blockId);
   if (currentIndex < 0) return blocks;
 
@@ -103,7 +117,12 @@ export function placeBrailleReadingGroup(
   placement = "before",
 ) {
   if (!draggedBlockId || !targetBlockId || draggedBlockId === targetBlockId) return blocks;
-  const groups = readingGroups(blocks, analyses);
+  const groups = readingGroupsForInteraction(
+    blocks,
+    analyses,
+    draggedBlockId,
+    targetBlockId,
+  );
   const draggedIndex = groups.findIndex((group) => group[0]?.block_id === draggedBlockId);
   const targetIndex = groups.findIndex((group) => group[0]?.block_id === targetBlockId);
   if (draggedIndex < 0 || targetIndex < 0) return blocks;
@@ -124,8 +143,48 @@ export function placeBrailleReadingGroup(
   }));
 }
 
-export function reorderTaggedPageDescription(text, previousBlocks = [], nextBlocks = []) {
+export function normalizeTaggedPageDescription(text = "") {
   const lines = String(text || "").split(/\r?\n/);
+  const normalized = [];
+  let taggedEntry = null;
+
+  const flushTaggedEntry = () => {
+    if (!taggedEntry) return;
+    const content = taggedEntry.parts
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    normalized.push(content
+      ? `[${taggedEntry.type}] ${content}`
+      : `[${taggedEntry.type}]`);
+    taggedEntry = null;
+  };
+
+  lines.forEach((line) => {
+    const match = line.match(/^\s*\[([a-z_]+)\]\s*(.*)$/i);
+    if (match) {
+      flushTaggedEntry();
+      taggedEntry = {
+        type: match[1].toLowerCase(),
+        parts: [match[2]],
+      };
+      return;
+    }
+
+    if (taggedEntry) {
+      if (line.trim()) taggedEntry.parts.push(line);
+      return;
+    }
+    normalized.push(line);
+  });
+  flushTaggedEntry();
+  return normalized.join("\n");
+}
+
+export function reorderTaggedPageDescription(text, previousBlocks = [], nextBlocks = []) {
+  const lines = normalizeTaggedPageDescription(text).split(/\r?\n/);
   const previousByType = new Map();
   sortBlocksForBrailleReading(previousBlocks).forEach((block) => {
     if (!previousByType.has(block.type)) previousByType.set(block.type, []);

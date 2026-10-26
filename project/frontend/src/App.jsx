@@ -8,6 +8,7 @@ import {
 } from "./accessibleHtml";
 import {
   moveBrailleReadingGroup,
+  normalizeTaggedPageDescription,
   placeBrailleReadingGroup,
   reorderTaggedPageDescription,
   sortBlocksForBrailleReading,
@@ -1003,7 +1004,7 @@ function LinkedPageDescription({
   });
   const typeOffsets = new Map();
 
-  return String(text || "").split(/\r?\n/).map((line, index) => {
+  return normalizeTaggedPageDescription(text).split(/\r?\n/).map((line, index) => {
     const taggedMatch = line.match(/^\s*\[([a-z_]+)\]\s*(.*)$/i);
     if (!taggedMatch) {
       return <span key={index} className="page-description-line">{line}</span>;
@@ -1026,7 +1027,7 @@ function LinkedPageDescription({
       return <span key={index} className="page-description-line">{line}</span>;
     }
 
-    const movable = type !== "caption" && type !== "page_number";
+    const movable = type !== "page_number";
     const moveHandle = movable && (
       <button
         type="button"
@@ -1055,6 +1056,7 @@ function LinkedPageDescription({
     const rowProps = {
       className: [
         "draggable-description-block",
+        !movable ? "static-description-block" : "",
         draggedBlockId === block.block_id ? "dragging" : "",
         dropTarget?.blockId === block.block_id
           ? `drop-${dropTarget.position}`
@@ -1324,11 +1326,17 @@ function PageDescriptionView({
     document.body.appendChild(mirror);
 
     const caretTop = caretMarker.offsetTop;
+    const caretLineHeight = Number.parseFloat(computedStyle.lineHeight)
+      || Number.parseFloat(computedStyle.fontSize)
+      || 0;
     const targetScrollTop = Math.max(0, caretTop - editor.clientHeight * 0.3);
     editor.scrollTop = targetScrollTop;
     setCursorCueTop(Math.max(
       editor.offsetTop + 8,
-      editor.offsetTop + caretTop - editor.scrollTop,
+      // caretTop is the selected line's top edge. The cue itself is vertically
+      // centered with translateY(-50%), so anchor it to the line centre rather
+      // than the top edge to avoid showing it beside the preceding line.
+      editor.offsetTop + caretTop - editor.scrollTop + caretLineHeight / 2,
     ));
     setCursorCueVisible(true);
     cursorCueTimerRef.current = window.setTimeout(() => setCursorCueVisible(false), 2200);
