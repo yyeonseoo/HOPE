@@ -1,6 +1,18 @@
-# Economics Math Textbook Layout Parser
+# HOPE: 시각장애학생을 위한 접근성 교과서 제작 도구
 
-교과서 PDF에서 원하는 페이지를 분석하고, 문서 요소를 bounding box 단위의 JSON으로 반환하는 MVP입니다. React 웹 화면에서 PDF와 페이지 번호를 선택하면 원본 페이지, 탐지 시각화, JSON을 함께 확인할 수 있습니다.
+경제수학 교과서 PDF를 분석해 시각장애학생이 쓸 수 있는 점역·스크린리더용 자료로 바꾸는 도구입니다. 페이지의 제목, 본문, 수식, 표, 그림을 bounding box 단위로 찾고, 수식은 LaTeX로, 표는 셀 구조로, 그림은 대체 설명으로 변환합니다. 그다음 점자 읽기 순서로 정리합니다. 검수자는 웹 화면에서 결과를 확인하고 고친 뒤 접근성 HTML로 내보냅니다.
+
+## 주요 기능
+
+- **레이아웃 분석**: DocLayout-YOLO, OCR, 교과서 맞춤 보정 규칙으로 페이지 블록과 읽기 순서를 찾습니다.
+- **요소별 의미 분석** (`src/analysis/`)
+  - 수식: 수식 crop에서 LaTeX를 인식합니다.
+  - 표: 행·열·셀 구조를 복원하고 설명문을 만듭니다.
+  - 그림: OpenCLIP으로 그림 유형을 분류하고 GPT-5로 대체 설명을 생성합니다. 이 기능은 선택 사항입니다.
+- **페이지 접근성 설명** (`src/page_description.py`): 블록 결과를 읽기 순서대로 이어 붙여 페이지 전체 설명 초안을 만듭니다. 초안에 없는 사실이나 숫자는 추가하지 않습니다.
+- **점자 읽기 순서 검수** (`frontend/src/brailleReadingOrder.js`): 블록 순서를 조정하고, 그림과 캡션을 연결하고, 순서 경고를 표시합니다. 페이지마다 "검수 완료"로 표시할 수 있습니다.
+- **블록 재분석** (`/api/analyze-block`): 블록 유형을 수동으로 바꾸면 페이지 전체를 다시 돌리지 않고 그 블록만 다시 분석합니다.
+- **접근성 HTML 내보내기** (`frontend/src/accessibleHtml.js`): 검수한 페이지들을 제목 구조와 그림 설명이 들어간 HTML 한 파일로 저장합니다.
 
 ## Current Pipeline
 
@@ -57,7 +69,11 @@ project/
 │   └── app.py
 ├── data/
 ├── frontend/
-│   └── src/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── accessibleHtml.js
+│   │   └── brailleReadingOrder.js
+│   └── tests/
 ├── outputs/
 ├── src/
 │   ├── analysis/
@@ -68,6 +84,7 @@ project/
 │   ├── layout_detection.py
 │   ├── main.py
 │   ├── ocr.py
+│   ├── page_description.py
 │   ├── page_pipeline.py
 │   ├── pdf_text.py
 │   ├── pdf_to_image.py
@@ -128,10 +145,10 @@ powershell -ExecutionPolicy Bypass -File .\run_frontend.ps1
 - `Layout`: 전체 페이지의 레이아웃 탐지 시각화
 - `Formula`: 수식 crop, LaTeX/MathML 결과, confidence, 설명과 warning
 - `Table`: 표 crop, 복원된 셀 구조, confidence, 설명과 warning
-- `Figure`: 그림 crop, 유형·축·계열·데이터, 설명과 warning
+- `Figure`: 그림 crop, 유형, 설명과 warning
 - `JSON`: 레이아웃과 의미 분석 결과 원문
 
-현재 API의 `semantic_analyses`는 빈 배열입니다. 각 담당 분석기가 구현되면 통합 담당자가 이 배열에 `schemas/block_analysis.schema.json` 형식의 결과를 연결합니다. 담당자는 프론트엔드를 직접 수정하지 않습니다.
+`/api/analyze` 응답의 `semantic_analyses`에는 수식·표·그림 분석 결과가 `schemas/block_analysis.schema.json` 형식으로 들어갑니다. `page_description`에는 페이지 접근성 설명이 들어갑니다. 결과 화면에서 점자 읽기 순서와 페이지 설명을 검수한 뒤 `HTML` 버튼으로 접근성 자료를 내려받습니다.
 
 교과서 PDF는 웹에서 직접 업로드하므로 반드시 `data/`에 넣을 필요는 없습니다. CLI로 전체 PDF를 처리할 때는 `project/data/` 사용을 권장합니다.
 
@@ -200,6 +217,13 @@ cd C:\Users\USER\HOPE\project
 ```
 
 현재 테스트는 숫자가 많은 문단, 설명형 계산, 실제 표, 박스 내부 수식, 짧은 문장 이어쓰기 등 주요 회귀 사례를 검사합니다.
+
+점자 읽기 순서와 접근성 HTML 테스트:
+
+```powershell
+cd C:\Users\USER\HOPE\project\frontend
+npm.cmd test
+```
 
 ## Current Limitations
 
