@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -157,31 +158,64 @@ def recognize_with_isolated_pix2tex(image_path: Path) -> Optional[str]:
     if not python_path.is_file() or not worker_path.is_file():
         return None
 
-    try:
-        completed = subprocess.run(
-            [str(python_path), str(worker_path), str(image_path)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+    line = _ask_pix2tex_server(python_path, worker_path, image_path)
+    if line is None:
         return None
+    try:
+        payload = json.loads(line[len(_PIX2TEX_PREFIX):])
+    except json.JSONDecodeError:
+        return None
+    latex = payload.get("latex")
+    return str(latex).strip() if latex else None
 
-    prefix = "__PIX2TEX_RESULT__"
-    for line in reversed(completed.stdout.splitlines()):
-        if not line.startswith(prefix):
-            continue
+
+_PIX2TEX_PREFIX = "__PIX2TEX_RESULT__"
+_PIX2TEX_TIMEOUT_SECONDS = 180
+_pix2tex_server: dict = {"process": None}
+_pix2tex_lock = threading.Lock()
+
+
+def _ask_pix2tex_server(python_path: Path, worker_path: Path, image_path: Path) -> Optional[str]:
+    """One long-lived pix2tex worker per backend process: the model loads
+    once instead of once per formula. A hung or dead worker is dropped and
+    the caller falls back to the text-based recognizer."""
+    with _pix2tex_lock:
+        process = _pix2tex_server["process"]
         try:
-            payload = json.loads(line[len(prefix):])
-        except json.JSONDecodeError:
+            if process is None or process.poll() is not None:
+                process = subprocess.Popen(
+                    [str(python_path), str(worker_path), "--serve"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                _pix2tex_server["process"] = process
+            process.stdin.write(f"{image_path}\n")
+            process.stdin.flush()
+        except OSError:
+            _pix2tex_server["process"] = None
             return None
-        latex = payload.get("latex")
-        return str(latex).strip() if latex else None
 
-    return None
+        answer: dict = {}
+
+        def read_answer() -> None:
+            for output_line in process.stdout:
+                if output_line.startswith(_PIX2TEX_PREFIX):
+                    answer["line"] = output_line.strip()
+                    return
+
+        reader = threading.Thread(target=read_answer, daemon=True)
+        reader.start()
+        reader.join(_PIX2TEX_TIMEOUT_SECONDS)
+        if "line" not in answer:
+            process.kill()
+            _pix2tex_server["process"] = None
+            return None
+        return answer["line"]
 
 def extract_formula_from_model_latex(model_latex: str) -> Optional[str]:
     """

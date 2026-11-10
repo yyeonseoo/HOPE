@@ -15,7 +15,32 @@ from pathlib import Path
 RESULT_PREFIX = "__PIX2TEX_RESULT__"
 
 
+def serve() -> int:
+    """Keep the model loaded and answer one image path per stdin line.
+
+    Loading pix2tex takes a minute or two on CPU; a fresh process per formula
+    made a page with three formulas take ~7 minutes."""
+    model = None
+    for line in sys.stdin:
+        image_path = Path(line.strip())
+        try:
+            if not image_path.is_file():
+                raise FileNotFoundError("image file not found")
+            from PIL import Image
+            from pix2tex.cli import LatexOCR
+
+            model = model or LatexOCR()
+            result = model(Image.open(image_path))
+            payload = {"latex": str(result).strip() if result else None}
+        except Exception as exc:
+            payload = {"error": f"{type(exc).__name__}: {exc}"}
+        print(f"{RESULT_PREFIX}{json.dumps(payload, ensure_ascii=False)}", flush=True)
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "--serve":
+        return serve()
     if len(sys.argv) != 2:
         print(f"{RESULT_PREFIX}{json.dumps({'error': 'image path is required'})}")
         return 2
