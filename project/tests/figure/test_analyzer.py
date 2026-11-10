@@ -284,6 +284,24 @@ class ContextAwarePipelineTests(unittest.TestCase):
         self.assertIn("토끼와 거북이가 경주를 한다.", prompt)
         self.assertIn("반비례 관계를 나타낸 그래프", prompt)
 
+    def test_tactile_suggestion_is_made_before_generation_and_shapes_the_prompt(self):
+        engine = ContextAwareEngineDouble()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertEqual(result["braille_review"]["suggested_visual_treatment"], "tactile_graphic")
+        self.assertIn("촉각 그래픽으로 제작된다", engine.captioner.calls[0][1])
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
+    def test_omitted_figure_skips_the_model_call(self):
+        engine = ContextAwareEngineDouble(classifier=FakeRouteClassifier(route="icon"))
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertEqual(result["braille_review"]["suggested_visual_treatment"], "omit")
+        self.assertEqual(engine.captioner.calls, [])
+        self.assertEqual(list(self.validator.iter_errors(result)), [])
+
     def test_legacy_engine_without_captioner_attribute_is_unaffected(self):
         # Same fake as the pre-existing FakeChartEngine tests above: no
         # `.classifier`/`.captioner`, so this must keep using the old

@@ -14,7 +14,7 @@ from src.analysis.figure.captioners import (
     _find_invalid_month_mentions,
     _find_suspicious_caption_content,
     _postprocess_caption_text,
-    _remove_unsupported_exact_claims,
+    _flag_unsupported_exact_claims,
     _substitute_stray_hanja,
     _trusted_axis_labels,
 )
@@ -125,55 +125,83 @@ class TrustedAxisLabelTests(unittest.TestCase):
 class GroundedExactClaimTests(unittest.TestCase):
     def test_removes_hallucinated_equation_sentence(self):
         text = "우상향하는 직선이 표시되어 있다. 이 직선은 y=2x+2를 나타낸다."
-        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y", "O"])
-        self.assertEqual(result, "우상향하는 직선이 표시되어 있다.")
+        result, warnings = _flag_unsupported_exact_claims(text, ["x", "y", "O"])
+        self.assertEqual(result, "우상향하는 직선이 표시되어 있다. 이 직선은 y=2x+2[확인 필요]를 나타낸다.")
         self.assertTrue(warnings)
 
     def test_keeps_equation_present_in_evidence(self):
         text = "직선 옆에 y=ax가 표시되어 있다."
-        result, warnings = _remove_unsupported_exact_claims(text, ["y=ax", "(1, a)"])
+        result, warnings = _flag_unsupported_exact_claims(text, ["y=ax", "(1, a)"])
         self.assertEqual(result, text)
         self.assertEqual(warnings, [])
 
     def test_removes_unsupported_coordinate_but_keeps_qualitative_sentence(self):
         text = "직선은 원점을 지난다. y축과의 교점은 (0, 1)이다."
-        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y", "1"])
-        self.assertEqual(result, "직선은 원점을 지난다.")
+        result, warnings = _flag_unsupported_exact_claims(text, ["x", "y", "1"])
+        self.assertEqual(result, "직선은 원점을 지난다. y축과의 교점은 (0, 1)[확인 필요]이다.")
         self.assertTrue(warnings)
 
     def test_does_not_accept_number_as_substring_of_another_value(self):
         text = "점의 값은 2이다."
-        result, warnings = _remove_unsupported_exact_claims(text, ["12"])
-        self.assertEqual(result, "")
+        result, warnings = _flag_unsupported_exact_claims(text, ["12"])
+        self.assertEqual(result, "점의 값은 2[확인 필요]이다.")
         self.assertTrue(warnings)
 
     def test_removes_unsupported_function_notation(self):
         text = "곡선은 f(x)=2x+1을 나타낸다."
-        result, warnings = _remove_unsupported_exact_claims(text, ["x", "y"])
-        self.assertEqual(result, "")
+        result, warnings = _flag_unsupported_exact_claims(text, ["x", "y"])
+        self.assertIn("[확인 필요]", result)
+        self.assertEqual(result.count("[확인 필요]"), 1)
         self.assertTrue(warnings)
 
     def test_keeps_parenthesized_panel_numbers_without_ocr_evidence(self):
         text = "도형 (1)은 위가 넓다. 도형 (2)는 가운데가 좁다. 도형 (3)은 세 부분으로 나뉜다."
-        result, warnings = _remove_unsupported_exact_claims(text, [])
+        result, warnings = _flag_unsupported_exact_claims(text, [])
         self.assertEqual(result, text)
         self.assertEqual(warnings, [])
 
     def test_keeps_numbered_panel_list_markers(self):
         text = "1. 첫 번째 그래프는 곡선이다. 2. 두 번째 그래프는 꺾은선이다."
-        result, warnings = _remove_unsupported_exact_claims(text, [])
+        result, warnings = _flag_unsupported_exact_claims(text, [])
         self.assertEqual(result, text)
         self.assertEqual(warnings, [])
 
     def test_still_removes_unsupported_data_number_sequence(self):
         text = "그래프의 값은 1, 2, 3이다."
-        result, warnings = _remove_unsupported_exact_claims(text, [])
-        self.assertEqual(result, "")
+        result, warnings = _flag_unsupported_exact_claims(text, [])
+        self.assertEqual(result, "그래프의 값은 1[확인 필요], 2[확인 필요], 3[확인 필요]이다.")
         self.assertTrue(warnings)
+
+    def test_does_not_split_decimal_values_into_sentences(self):
+        result, warnings = _flag_unsupported_exact_claims("높이는 1.5에서 시작한다.", ["1.5"])
+        self.assertEqual(result, "높이는 1.5에서 시작한다.")
+        self.assertEqual(warnings, [])
+
+    def test_coordinates_and_axis_lines_readable_from_tick_labels_are_kept(self):
+        text = "점 (1, 2)와 (-1, -2)가 있다. x=1에 점선이 있다. 직선은 제3사분면을 지난다."
+        result, warnings = _flag_unsupported_exact_claims(text, ["O", "1", "2", "-1", "-2", "x", "y"])
+        self.assertEqual(result, text)
+        self.assertEqual(warnings, [])
+
+    def test_axis_line_needs_only_the_tick_value(self):
+        result, warnings = _flag_unsupported_exact_claims("B는 x=30에 있다.", ["O", "30", "20"])
+        self.assertEqual(warnings, [])
+
+    def test_postprocess_keeps_tactile_spec_labels_and_decimals(self):
+        spec = "가로축: 시간(초); 세로축: 높이(m); 눈금: 1, 1.5, 2"
+        self.assertEqual(_postprocess_caption_text(spec), spec)
+
+    def test_origin_label_supports_zero(self):
+        result, warnings = _flag_unsupported_exact_claims("D의 세로좌표는 0이다.", ["O", "D"])
+        self.assertEqual(warnings, [])
+
+    def test_coordinate_with_unprinted_value_is_still_flagged(self):
+        result, warnings = _flag_unsupported_exact_claims("점 (7, 2)가 있다.", ["1", "2"])
+        self.assertIn("[확인 필요]", result)
 
     def test_keeps_zero_when_it_only_identifies_the_origin(self):
         text = "첫 번째 그래프는 원점 0에서 시작해 일정하게 증가한다."
-        result, warnings = _remove_unsupported_exact_claims(text, [])
+        result, warnings = _flag_unsupported_exact_claims(text, [])
         self.assertEqual(result, text)
         self.assertEqual(warnings, [])
 
@@ -302,7 +330,7 @@ class ChatGPTCaptionerTests(unittest.TestCase):
 
         self.assertIs(captioner._client, first_client)
 
-    def test_removes_exact_claims_unsupported_by_evidence(self):
+    def test_flags_exact_claims_unsupported_by_evidence(self):
         calls = {}
         captioner = ChatGPTCaptioner()
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -310,7 +338,7 @@ class ChatGPTCaptionerTests(unittest.TestCase):
         ):
             output = captioner.caption_with_prompt(self._image(tmp), "설명하세요.", evidence=[])
 
-        self.assertNotIn("y=3x+5", output.text)
+        self.assertIn("y=3x+5[확인 필요]", output.text)
         self.assertTrue(output.warnings)
 
     def test_client_gets_default_timeout_and_retries(self):
@@ -400,11 +428,11 @@ class ChatGPTCaptionerTests(unittest.TestCase):
         self.assertIn("정확한 수식, 좌표, 눈금 숫자를 쓰지 말고", retry_prompt)
         self.assertFalse(output.warnings)
 
-    def test_retries_when_grounding_removes_entire_first_response(self):
+    def test_retries_when_first_response_is_empty(self):
         calls = {}
         captioner = ChatGPTCaptioner(model="gpt-5")
         replies = [
-            "그래프는 y=99x를 나타낸다.",
+            "",
             "좌표평면에 오른쪽 위로 향하는 직선이 그려져 있다.",
         ]
         with tempfile.TemporaryDirectory() as tmp, patch.dict(

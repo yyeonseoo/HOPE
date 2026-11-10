@@ -35,6 +35,7 @@ _ADDITIVE_RECORD_KEYS = (
     "prompt_trace",
     "type_signals",
     "api_usage",
+    "braille_review",
 )
 
 

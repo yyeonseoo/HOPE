@@ -59,6 +59,16 @@
       "description": "Optional top-level mirror of analysis.result.figure_type, set by the figure module's context-aware pipeline.",
       "enum": ["graph", "table", "mathematical_diagram", "illustration", "photo", "line_chart", "bar_chart", "pie_chart", "scatter_plot", "diagram", "icon", "other", "unknown", null]
     },
+    "braille_review": {
+      "description": "Braille treatment for a figure: rule-based suggestion from src/analysis/figure/treatment.py plus the reviewer's choice (visual_treatment) added by the UI.",
+      "type": "object",
+      "properties": {
+        "suggested_visual_treatment": { "enum": ["tactile_graphic", "transcriber_note", "omit"] },
+        "visual_treatment": { "enum": ["tactile_graphic", "transcriber_note", "omit", "table"] },
+        "treatment_reason": { "type": "string" },
+        "treatment_rationale": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "education_context": { "$ref": "#/$defs/educationContext" },
     "grounding": { "$ref": "#/$defs/grounding" },
     "confidence": {

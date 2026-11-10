@@ -114,7 +114,7 @@ class ChatGPTCaptioner:
         )
         api_usage = _openai_usage(response, self.model_name)
         raw_text = (response.choices[0].message.content or "").strip()
-        text, claim_warnings = _remove_unsupported_exact_claims(raw_text, evidence)
+        text, claim_warnings = _flag_unsupported_exact_claims(raw_text, evidence)
         text = _postprocess_caption_text(text)
 
         # A reasoning model can occasionally use its entire completion budget
@@ -141,16 +141,14 @@ class ChatGPTCaptioner:
             recovery_raw = (
                 recovery_response.choices[0].message.content or ""
             ).strip()
-            recovery_text, recovery_warnings = _remove_unsupported_exact_claims(
+            recovery_text, recovery_warnings = _flag_unsupported_exact_claims(
                 recovery_raw,
                 evidence,
             )
             recovery_text = _postprocess_caption_text(recovery_text)
             if recovery_text:
                 text = recovery_text
-                claim_warnings = []
-            else:
-                claim_warnings += recovery_warnings
+            claim_warnings += recovery_warnings
 
         elapsed = time.perf_counter() - started
         warnings = [] if text else ["ChatGPT returned an empty caption."]
@@ -161,7 +159,7 @@ class ChatGPTCaptioner:
             confidence=None,
             generation_time_seconds=elapsed,
             model_name=f"{self.model_name}-context-aware",
-            model_version=self.model_version,
+            model_version=getattr(response, "model", None) or self.model_version,
             warnings=warnings,
             api_usage=api_usage,
         )
@@ -275,17 +273,26 @@ def _compact_grounding_text(text: str) -> str:
     return re.sub(r"\s+", "", text).lower().replace("×", "*").replace("−", "-")
 
 
-def _remove_unsupported_exact_claims(
+def _flag_unsupported_exact_claims(
     text: str,
     evidence: Sequence[Any] | None,
 ) -> tuple[str, list[str]]:
-    """Drop sentences containing exact values that are absent from OCR/PDF evidence."""
+    """Mark exact values absent from OCR/PDF evidence with [확인 필요].
+
+    Values are kept for the reviewer instead of deleting whole sentences:
+    braille notes need tick values and coordinates, and deleting them hid
+    correct readings along with hallucinated ones.
+    """
     evidence_text = " ".join(item["text"] for item in _normalized_evidence(evidence))
     supported = _compact_grounding_text(evidence_text)
     supported_numbers = set(_EXACT_NUMBER_PATTERN.findall(evidence_text))
+    # Graphs label the origin "O"; reading it as 0 is not a hallucination.
+    if re.search(r"(?<![A-Za-z])O(?![A-Za-z])", evidence_text):
+        supported_numbers.add("0")
+    # A period between digits is a decimal point, not a sentence end ("1.5").
     sentences = [
         part.strip()
-        for part in re.findall(r".+?(?:[.!?。！？]+|$)", text, flags=re.DOTALL)
+        for part in re.findall(r".+?(?:[.!?。！？]+(?!\d)|$)", text, flags=re.DOTALL)
         if part.strip()
     ]
     kept: list[str] = []
@@ -298,6 +305,7 @@ def _remove_unsupported_exact_claims(
         unsupported = [
             claim for claim in structural_claims
             if _compact_grounding_text(claim) not in supported
+            and not _readable_from_labels(claim, supported, supported_numbers)
         ]
         unsupported.extend(
             claim for claim in _EXACT_NUMBER_PATTERN.findall(sentence)
@@ -309,16 +317,46 @@ def _remove_unsupported_exact_claims(
         )
         if unsupported:
             removed_claims.extend(unsupported)
-            continue
+            sentence = _mark_claims(sentence, unsupported)
         kept.append(sentence)
     warnings = []
     if removed_claims:
         unique = list(dict.fromkeys(removed_claims))
         warnings.append(
-            "Removed caption sentence(s) containing exact claims absent from current image/OCR evidence: "
+            "Flagged exact claims absent from current image/OCR evidence as [확인 필요]: "
             + ", ".join(repr(item) for item in unique)
         )
     return " ".join(kept).strip(), warnings
+
+
+def _mark_claims(sentence: str, claims: Sequence[str]) -> str:
+    # Longest first so a number inside an already-flagged equation is not
+    # flagged a second time.
+    done: list[str] = []
+    for claim in sorted(dict.fromkeys(claims), key=len, reverse=True):
+        if any(claim in longer for longer in done):
+            continue
+        pattern = rf"(?<![\d.]){re.escape(claim)}(?![\d.])"
+        sentence = re.sub(pattern, lambda m: f"{m.group(0)}[확인 필요]", sentence, count=1)
+        done.append(claim)
+    return sentence
+
+
+def _readable_from_labels(claim: str, supported: str, supported_numbers: set[str]) -> bool:
+    """A point "(1, 2)" or a line "x=1" is readable when each part is a
+    printed tick value or label, even if the combined string is not."""
+    is_coordinate = bool(_EXACT_COORDINATE_PATTERN.fullmatch(claim.strip()))
+    is_axis_value = bool(re.fullmatch(r"[A-Za-z]\s*=\s*[+-]?\d+(?:\.\d+)?", claim.strip()))
+    if not (is_coordinate or is_axis_value):
+        return False
+    for token in re.findall(r"[+-]?\d+(?:\.\d+)?|[A-Za-z]", claim):
+        if token[-1].isdigit():
+            if token.lstrip("+") not in supported_numbers:
+                return False
+        # "x"/"y" in "x=30" name an axis and are rarely printed on it.
+        elif not is_axis_value and token.lower() not in supported:
+            return False
+    return True
 
 
 def _is_panel_number(sentence: str, claim: str) -> bool:
@@ -329,6 +367,7 @@ def _is_panel_number(sentence: str, claim: str) -> bool:
         rf"^\s*{number}\s*[.)](?:\s+|$)",
         rf"(?<!\d){number}\s*(?:번|번째)(?!\d)",
         rf"(?:도형|그래프|그림|패널|보기)\s*\(?\s*{number}\s*\)?",
+        rf"(?<!\d){number}\s*사분면",
     )
     return any(re.search(pattern, sentence) for pattern in patterns)
 
@@ -425,11 +464,37 @@ def _substitute_stray_hanja(text: str) -> str:
     safe to auto-correct rather than just warn about, since the character's
     Sino-Korean reading is a fixed, unambiguous lookup, not a guess.
     """
-    try:
-        import hanja
-    except ImportError:
-        return text
-    return hanja.translate(text, "substitution")
+    hanja = _load_hanja()
+    return hanja.translate(text, "substitution") if hanja else text
+
+
+# hanja reads its table.yml with the platform encoding (cp949 on Korean
+# Windows) through yaml, which PaddleX reconfigures -- both break the load.
+# The table is plain '"\\uXXXX": "\\uYYYY"' lines, so read it directly and hand
+# it to hanja before hanja.table is ever imported.
+_HANJA_LINE = re.compile(r'^"\\(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8}))": "\\u([0-9A-Fa-f]{4})"$')
+
+
+def _load_hanja() -> Any:
+    import importlib.util
+    import sys
+    import types
+
+    if "hanja.table" not in sys.modules:
+        spec = importlib.util.find_spec("hanja")
+        if spec is None or spec.origin is None:
+            return None
+        table = {}
+        for line in Path(spec.origin).with_name("table.yml").read_text(encoding="utf-8").splitlines():
+            match = _HANJA_LINE.match(line)
+            if match:
+                table[chr(int(match.group(1) or match.group(2), 16))] = chr(int(match.group(3), 16))
+        module = types.ModuleType("hanja.table")
+        module.hanja_table = table
+        sys.modules["hanja.table"] = module
+    import hanja
+
+    return hanja
 
 
 def _collapse_decimal_point_spacing(text: str) -> str:
@@ -447,9 +512,11 @@ def _postprocess_caption_text(text: str) -> str:
     text = text.replace("�", "").replace("```", "").replace("`", "")
     text = text.replace("**", "")
     text = re.sub(r"(?m)^\s*(?:[-*•]\s+|\d+[.)]\s+|#{1,6}\s*)", "", text)
-    text = re.sub(r"^\s*[^.!?。！？\n:]{1,20}:\s*", "", text)
+    # Strip a leading "설명:"-style header, but not "가로축:" in a tactile spec.
+    if ";" not in text:
+        text = re.sub(r"^\s*[^.!?。！？\n:]{1,20}:\s*", "", text)
     text = text.replace("#(", "(")
-    parts = [part.strip() for part in re.findall(r".+?(?:[.!?。！？]+|$)", text, flags=re.DOTALL) if part.strip()]
+    parts = [part.strip() for part in re.findall(r".+?(?:[.!?。！？]+(?!\d)|$)", text, flags=re.DOTALL) if part.strip()]
     kept: list[str] = []
     seen: set[str] = set()
     duplicate_run = 0

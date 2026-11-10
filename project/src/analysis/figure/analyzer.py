@@ -8,12 +8,13 @@ from .context import build_figure_context
 from .context_builder import FigureContext, FigureContextBuilder
 from .crop import crop_and_save_figure_block
 from .engine import FigureUnderstandingEngine, run_figure_engine
-from .generator import FigureDescriptionGenerator
+from .generator import FigureDescriptionGenerator, GeneratedDescription
 from .graph_visual import GraphVisualCue, analyze_graph_visual
 from .grounding import TopicGroundingScorer, compute_grounding_scores
 from .normalize import build_figure_analysis
 from .postprocess import build_context_aware_figure_record, split_additive_fields
 from .prompt_builder import FigurePromptBuilder
+from .treatment import suggest_visual_treatment
 from .type_signals import GRAPH_FIGURE_TYPES, TypeSignals, extract_type_signals
 
 # Nearest `window_size` paragraphs before/after the figure, not just the
@@ -81,6 +82,8 @@ def analyze_figure_block(
     figure_context = _context_builder.build(
         blocks, block, page_id=page_id, ocr_lines=ocr_lines, window_size=_CONTEXT_WINDOW_SIZE
     )
+    nearby_texts = _nearby_texts(blocks, block_index)
+    area_ratio = _page_area_ratio(bbox, page_image_path)
 
     additive_fields: dict[str, Any] = {}
     if crop_path is None:
@@ -95,7 +98,9 @@ def analyze_figure_block(
         }
     elif _supports_context_aware_pipeline(engine):
         try:
-            normalized = _run_context_aware_pipeline(engine, crop_path, figure_context, ocr_lines, bbox)
+            normalized = _run_context_aware_pipeline(
+                engine, crop_path, figure_context, ocr_lines, bbox, nearby_texts, area_ratio
+            )
             additive_fields = split_additive_fields(normalized)
         except Exception as exc:  # One bad figure must not fail the whole page.
             evidence = _figure_text_evidence(ocr_lines, bbox)
@@ -147,7 +152,31 @@ def analyze_figure_block(
     if "description" in normalized:
         record["description"] = normalized["description"]
     record.update(additive_fields)
+    if "braille_review" not in record:
+        result = normalized["analysis"].get("result") or {}
+        record["braille_review"] = suggest_visual_treatment(
+            record.get("figure_type") or result.get("figure_type"), nearby_texts, area_ratio
+        )
     return record
+
+
+def _page_area_ratio(bbox: Any, page_image_path: str | Path | None) -> float | None:
+    if not page_image_path or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(page_image_path) as image:
+            width, height = image.size
+    except OSError:
+        return None
+    x1, y1, x2, y2 = bbox
+    return max(0.0, (x2 - x1) * (y2 - y1)) / max(1, width * height)
+
+
+def _nearby_texts(blocks: Sequence[Mapping[str, Any]], block_index: int, window: int = 2) -> list[str]:
+    neighbors = blocks[max(0, block_index - window):block_index] + blocks[block_index + 1:block_index + 1 + window]
+    return [str(item.get("text") or "") for item in neighbors if isinstance(item, Mapping)]
 
 
 def _supports_context_aware_pipeline(engine: FigureUnderstandingEngine | None) -> bool:
@@ -170,6 +199,8 @@ def _run_context_aware_pipeline(
     figure_context: FigureContext,
     ocr_lines: Sequence[Mapping[str, Any]] | None,
     bbox: Any,
+    nearby_texts: Sequence[str] = (),
+    area_ratio: float | None = None,
 ) -> dict[str, Any]:
     """Classify -> extract type-specific signals -> build an educational
     prompt -> generate -> score grounding -> assemble the schema-conformant
@@ -179,19 +210,33 @@ def _run_context_aware_pipeline(
     postprocess.py."""
     prediction = engine.classifier.classify(crop_path)
     figure_type = prediction.route
+    # Decide the braille treatment before generating: it picks the output
+    # format, and an omitted figure needs no model call at all.
+    braille_review = suggest_visual_treatment(figure_type, nearby_texts, area_ratio)
+    treatment = braille_review["suggested_visual_treatment"]
     evidence = _figure_text_evidence(ocr_lines, bbox)
     type_signals = extract_type_signals(figure_type, evidence, _graph_visual_cue(figure_type, crop_path))
-    prompt_result = _prompt_builder.build(figure_type, figure_context, type_signals)
-    description = _description_generator.generate(
-        engine.captioner, crop_path, prompt_result.prompt, evidence=evidence
-    )
+    prompt_result = _prompt_builder.build(figure_type, figure_context, type_signals, treatment=treatment)
+    if treatment == "omit":
+        description = GeneratedDescription(
+            text="",
+            confidence=None,
+            generation_time_seconds=None,
+            model_name=str(getattr(engine.captioner, "model_name", "figure-captioner")),
+            model_version=None,
+            warnings=["Description skipped: suggested braille treatment is omit."],
+        )
+    else:
+        description = _description_generator.generate(
+            engine.captioner, crop_path, prompt_result.prompt, evidence=evidence
+        )
     grounding_scorer = getattr(engine, "grounding_scorer", None) or TopicGroundingScorer()
     grounding_scores = compute_grounding_scores(description.text, figure_context, grounding_scorer)
     classifier_model = {
         "name": str(getattr(engine.classifier, "model_name", engine.classifier.__class__.__name__)),
         "version": getattr(engine.classifier, "model_version", None),
     }
-    return build_context_aware_figure_record(
+    record = build_context_aware_figure_record(
         figure_type=figure_type,
         classifier_model=classifier_model,
         classifier_confidence=prediction.confidence,
@@ -202,6 +247,8 @@ def _run_context_aware_pipeline(
         type_signals=type_signals,
         evidence=evidence,
     )
+    record["braille_review"] = braille_review
+    return record
 
 
 def _graph_visual_cue(figure_type: str, crop_path: str) -> GraphVisualCue | None:
@@ -226,6 +273,8 @@ def _neighbor_id(blocks: list[Mapping[str, Any]], index: int) -> Optional[str]:
 
 
 def _adjacent_caption_id(blocks: list[Mapping[str, Any]], index: int) -> Optional[str]:
+    if 0 <= index < len(blocks) and blocks[index].get("caption_block_id"):
+        return blocks[index]["caption_block_id"]
     for candidate_index in (index - 1, index + 1):
         if 0 <= candidate_index < len(blocks) and blocks[candidate_index].get("type") == "caption":
             return blocks[candidate_index].get("block_id")

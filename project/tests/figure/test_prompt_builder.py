@@ -12,11 +12,20 @@ class FigurePromptBuilderTests(unittest.TestCase):
     def _prompt(self, figure_type, context, type_signals=None):
         return self.builder.build(figure_type, context, type_signals).prompt
 
-    def test_prompt_asks_for_purpose_not_a_visual_inventory(self):
+    def test_prompt_asks_for_objective_description_not_interpretation(self):
         context = FigureContext(caption="반비례 관계를 나타낸 그래프")
         prompt = self._prompt("graph", context)
 
-        self.assertIn("무엇을 설명하기 위해", prompt)
+        self.assertIn("보이는 것", prompt)
+        self.assertIn("해석하지 말고", prompt)
+        self.assertIn("풀이 전략을 쓰지 않는다", prompt)
+
+    def test_solution_paragraphs_are_kept_out_of_the_context(self):
+        context = FigureContext(next_paragraphs=("그래프를 보고 답하시오.", "풀이 거리는 2 km이다."))
+        prompt = self._prompt("graph", context)
+
+        self.assertIn("그래프를 보고 답하시오.", prompt)
+        self.assertNotIn("거리는 2 km이다", prompt)
 
     def test_prompt_includes_available_context_fields(self):
         context = FigureContext(

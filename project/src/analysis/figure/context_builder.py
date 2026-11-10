@@ -344,6 +344,11 @@ def _nearest_caption(
     only if they are all paragraphs (a figure with one descriptive paragraph
     squeezed between it and its caption still connects to that caption; a
     formula/table/another figure in between signals a real boundary)."""
+    linked_id = ordered[position].get("caption_block_id") if 0 <= position < len(ordered) else None
+    if linked_id:
+        linked = next((b for b in ordered if b.get("block_id") == linked_id), None)
+        if linked is not None:
+            return linked
     for distance in range(1, max_distance + 1):
         for index in (position - distance, position + distance):
             if not 0 <= index < len(ordered):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -7,9 +8,10 @@ from .context_builder import FigureContext
 from .type_signals import TypeSignals
 
 _GOAL_INSTRUCTION = (
-    "당신은 한국 경제수학 교과서의 그림을 설명하는 교육 콘텐츠 작성자입니다. "
-    "이 그림에 무엇이 그려져 있는지를 나열하지 말고, 이 그림이 교과서에서 '무엇을 설명하기 위해' "
-    "사용되었는지를 중심으로 설명하세요. "
+    "당신은 한국 경제수학 점자교과서의 점역자 주를 쓰는 점역사입니다. "
+    "점역자 주는 그림에 '보이는 것'을 객관적으로 묘사합니다. 그림이 무엇을 설명하기 위해 쓰였는지, "
+    "어떤 의미나 인과관계를 보여주는지 해석하지 말고, 축 이름·단위·눈금·점의 좌표·선의 모양처럼 "
+    "이미지에서 확인되는 사실만 쓰세요. 본문이 이미 말한 내용은 반복하지 마세요. "
     "단, 이미지가 실제로는 작은 색상 도형, 구분선, 불릿 아이콘처럼 그 자체에 학습 내용이 담겨 있지 "
     "않은 단순 장식이라면, 주변 문맥과 억지로 연결해 주제를 지어내지 말고 단순 장식용 아이콘이라는 "
     "사실을 그대로 설명하세요."
@@ -31,68 +33,77 @@ _HALLUCINATION_GUARD = (
     "- 이미지와 Context에서 확인 가능한 내용만 설명한다.\n"
     "- 숫자를 임의로 생성하지 않는다.\n"
     "- 모르면 모른다고 한다.\n"
+    "- 문제의 정답, 풀이 방법, 풀이 전략을 쓰지 않는다.\n"
+    "- 본문과 그림에 없는 용어(예: 교과서에 나오지 않은 함수 이름)를 새로 쓰지 않는다.\n"
     "- 이미지가 실제로는 작은 색상 도형, 구분선, 불릿 아이콘처럼 정보가 없는 단순 장식이라면, "
     "주변 문맥을 끌어와 억지로 의미나 주제를 부여하지 말고 단순 장식용 아이콘이라는 사실 그대로 설명한다."
 )
 
 _OUTPUT_INSTRUCTION = (
-    "목록이나 마크다운, 제목 없이 자연스러운 한국어 2~4문장의 문단 하나로만 답하세요. "
+    # NISE2021 p.19: 점역자 주 안에 한 문장으로 최대한 간결하게.
+    "목록이나 마크다운, 제목 없이 한국어 한 문장으로만 답하세요. 그림 전체를 한 문장으로 간결하게 "
+    "묘사하고, 꼭 필요한 값(라벨, 수치)만 그 문장 안에 넣으세요. "
     "문장은 교과서 본문처럼 '~다/~이다/~한다'로 끝나는 평서형으로 쓰고, '~습니다', '~해요'와 같은 "
     "존댓말 종결어미는 사용하지 마세요."
 )
 
 _GRAPH_OUTPUT_INSTRUCTION = (
-    "목록이나 마크다운, 제목 없이 자연스러운 한국어 문단 하나로만 답하세요. 단일 그래프는 "
-    "2~4문장으로 쓰고, 소그래프가 여러 개이면 모든 소그래프를 빠짐없이 설명하기 위해 최대 "
+    "목록이나 마크다운, 제목 없이 한국어 문단 하나로만 답하세요. 첫 문장은 축 이름과 단위를 포함해 "
+    "그래프 전체를 한 문장으로 묘사하고, 이어서 눈금 값과 꺾이는 점의 좌표처럼 보이는 값을 적으세요. "
+    "단일 그래프는 2~4문장으로 쓰고, 소그래프가 여러 개이면 모든 소그래프를 빠짐없이 묘사하기 위해 최대 "
     "6문장까지 사용할 수 있습니다. 문장은 교과서 본문처럼 '~다/~이다/~한다'로 끝나는 평서형으로 "
     "쓰고, '~습니다', '~해요'와 같은 존댓말 종결어미는 사용하지 마세요."
+)
+
+# Tactile graphics are drawn from data, not prose: ask for a spec list the
+# tactile-graphic maker can check against the print page.
+_TACTILE_SPEC_INSTRUCTION = (
+    "이 그림은 촉각 그래픽으로 제작된다. 문장으로 묘사하지 말고, 촉각 그래픽 제작자가 쓸 항목만 "
+    "'항목: 값' 형식으로 세미콜론(;)으로 구분해 한 줄로 적으세요. 항목은 가로축, 세로축(이름과 단위), "
+    "눈금(보이는 값), 점(라벨과 좌표), 선(모양과 구간, 실선/점선), 기타 표기 순서로 쓰고, 보이지 않는 "
+    "항목은 빼세요. 축 이름·눈금·라벨 값은 '그림 내부 텍스트'에 있는 값을 우선 그대로 쓰세요. "
+    # TG2022 Unit 3 planning-sheet items the tactile-graphic maker decides on.
+    "이어서 제작 계획 항목을 같은 형식으로 덧붙이세요: 생략할 요소(배경 색, 사진, 장식, 보조 격자 등), "
+    "분할 필요(그래프가 여러 개이거나 복잡하면 나눌지 여부), 안내 주(학생에게 촉도의 구성을 알려 주는 "
+    "한 문장, 정답이나 해석은 쓰지 않음)."
 )
 
 _TYPE_INSTRUCTIONS: dict[str, str] = {
     "graph": (
         "그래프 유형 지침: 먼저 이미지 안에 번호나 구획으로 분리된 소그래프가 몇 개인지 확인하세요. "
         "소그래프가 여러 개이면 하나로 뭉뚱그리지 말고, 보이는 순서대로 모든 소그래프의 선이 "
-        "증가·유지·감소하는 구간을 각각 빠짐없이 설명하세요. 그다음 그래프가 무엇과 무엇을 "
-        "비교하는지와 전체적인 의미를 설명하세요. 눈금 숫자가 핵심이 아니라면 숫자를 옮겨 적는 대신 "
-        "'원점에서 시작한다'처럼 시각적 관계로 표현하세요."
+        "증가·유지·감소하는 구간을 각각 빠짐없이 묘사하세요. 구간이 바뀌는 점은 "
+        "눈금에서 읽히는 좌표로 적고, 그래프의 의미는 해석하지 마세요."
     ),
     "line_chart": (
         "그래프 유형 지침: 먼저 이미지 안에 번호나 구획으로 분리된 소그래프가 몇 개인지 확인하세요. "
         "소그래프가 여러 개이면 하나로 뭉뚱그리지 말고, 보이는 순서대로 모든 소그래프의 선이 "
-        "증가·유지·감소하는 구간을 각각 빠짐없이 설명하세요. 그다음 그래프가 무엇과 무엇을 "
-        "비교하는지와 전체적인 의미를 설명하세요. 눈금 숫자가 핵심이 아니라면 숫자를 옮겨 적는 대신 "
-        "'원점에서 시작한다'처럼 시각적 관계로 표현하세요."
+        "증가·유지·감소하는 구간을 각각 빠짐없이 묘사하세요. 구간이 바뀌는 점은 "
+        "눈금에서 읽히는 좌표로 적고, 그래프의 의미는 해석하지 마세요."
     ),
     "bar_chart": (
-        "그래프 유형 지침: 막대들이 나타내는 항목을 서로 비교하고, 어떤 항목이 가장 크거나 작은지, "
-        "전체적인 증가·감소 추세가 있는지를 중심으로 설명하세요."
+        "그래프 유형 지침: 각 막대의 항목 이름과 눈금에서 읽히는 값을 순서대로 적으세요."
     ),
     "pie_chart": (
-        "그래프 유형 지침: 전체에서 각 부분이 차지하는 비중을 비교하고, 가장 큰 부분과 작은 부분을 "
-        "중심으로 설명하세요."
+        "그래프 유형 지침: 각 부분의 항목 이름과 표시된 비율을 순서대로 적으세요."
     ),
     "scatter_plot": (
-        "그래프 유형 지침: 점들이 흩어진 전반적인 경향과 두 값 사이의 관계(비례/반비례 등으로 보이는 "
-        "패턴)를 중심으로 설명하세요."
+        "그래프 유형 지침: 축 이름과 범위, 점의 개수와 라벨이 붙은 점의 좌표를 적으세요."
     ),
     "table": (
-        "표 유형 지침: 표의 행과 열이 나타내는 항목, 항목들 사이의 관계와 값의 변화를 중심으로 "
-        "설명하세요."
+        "표 유형 지침: 행과 열의 머리글, 칸의 개수, 비어 있는 칸의 위치를 적으세요."
     ),
     "mathematical_diagram": (
-        "수학 도식 유형 지침: 도형의 구조, 각 구성 요소 사이의 관계, 표시된 기호나 문자가 의미하는 "
-        "바를 중심으로 설명하세요."
+        "수학 도식 유형 지침: 도형의 구성 요소와 배치, 표시된 기호나 문자를 보이는 그대로 적으세요."
     ),
     "diagram": (
-        "도식 유형 지침: 구성 요소들의 구조, 서로의 관계, 흐름을 중심으로 설명하세요."
+        "도식 유형 지침: 구성 요소와 화살표가 잇는 순서를 보이는 그대로 적으세요."
     ),
     "illustration": (
-        "삽화 유형 지침: 이 삽화가 어떤 개념이나 상황을 설명하기 위해 그려졌는지를 중심으로 "
-        "설명하세요."
+        "삽화 유형 지침: 삽화에 보이는 대상과 장면을 한 문장으로 묘사하세요."
     ),
     "photo": (
-        "사진 유형 지침: 사진이 보여주는 상황이 무엇이고, 그것이 교과서 내용과 어떻게 연결되는지를 "
-        "중심으로 설명하세요."
+        "사진 유형 지침: 사진에 보이는 대상과 장면을 한 문장으로 묘사하세요."
     ),
     "icon": (
         "아이콘 유형 지침: 아이콘이 나타내는 단순한 의미나 범주를 한 문장으로 간단히 설명하세요."
@@ -107,14 +118,17 @@ _DEFAULT_TYPE_INSTRUCTION = _TYPE_INSTRUCTIONS["illustration"]
 # default instead of raising, since the layout pipeline's role vocabulary is
 # expected to grow independently of this module.
 _ROLE_HINT_INSTRUCTIONS: dict[str, str] = {
-    "example": "이 그림은 '예제' 영역에 속합니다. 풀이 과정을 이해하는 데 필요한 정보를 중심으로 설명하세요.",
-    "solution": "이 그림은 '풀이/확인' 영역에 속합니다. 풀이 과정을 이해하는 데 필요한 정보를 중심으로 설명하세요.",
+    "example": "이 그림은 '예제' 영역에 속합니다. 풀이에 쓰이는 값이 보이면 그대로 적되 풀이 과정은 쓰지 마세요.",
+    "solution": "이 그림은 '풀이/확인' 영역에 속합니다. 보이는 값만 적고 풀이 과정을 다시 설명하지 마세요.",
     "problem": (
         "이 그림은 '문제' 영역에 속합니다. 정답을 추론하거나 알려주지 말고, 문제를 이해하는 데 "
         "필요한 정보만 제공하세요."
     ),
 }
-_DEFAULT_ROLE_HINT_INSTRUCTION = "이 그림은 개념 설명 영역에 속합니다. 개념 자체를 중심으로 설명하세요."
+_DEFAULT_ROLE_HINT_INSTRUCTION = ""
+# Text after these markers (worked solutions, answers) must not leak into the
+# description context.
+_SOLUTION_START = re.compile(r"^\s*(?:풀이|답|사고 과정|정답)")
 
 _CONTEXT_FIELD_LABELS: tuple[tuple[str, str], ...] = (
     ("caption", "캡션"),
@@ -174,17 +188,19 @@ class FigurePromptBuilder:
         figure_type: str,
         context: FigureContext,
         type_signals: TypeSignals | None = None,
+        treatment: str | None = None,
     ) -> PromptResult:
         title_section, use_title = self._title_section(context)
         context_lines_section, trace_partial = self._context_lines_section(context)
         type_signal_section, use_type_signals = self._type_signal_section(type_signals)
         role_instruction, use_role_hint = self._role_instruction(context)
 
-        output_instruction = (
-            _GRAPH_OUTPUT_INSTRUCTION
-            if figure_type in {"graph", "line_chart"}
-            else _OUTPUT_INSTRUCTION
-        )
+        if treatment == "tactile_graphic":
+            output_instruction = _TACTILE_SPEC_INSTRUCTION
+        elif figure_type in {"graph", "line_chart"}:
+            output_instruction = _GRAPH_OUTPUT_INSTRUCTION
+        else:
+            output_instruction = _OUTPUT_INSTRUCTION
         sections = [
             _GOAL_INSTRUCTION,
             title_section,
@@ -235,6 +251,9 @@ class FigurePromptBuilder:
 
         previous = context.previous_paragraphs or ((context.previous_paragraph,) if context.previous_paragraph else ())
         next_ = context.next_paragraphs or ((context.next_paragraph,) if context.next_paragraph else ())
+        cut = next((i for i, text in enumerate(next_) if _SOLUTION_START.match(text or "")), None)
+        if cut is not None:
+            next_ = next_[:cut]
         if previous:
             label = "바로 앞 문단" if len(previous) == 1 else f"앞 문단(최근 {len(previous)}개)"
             lines.append(f"{label}: " + " / ".join(previous))

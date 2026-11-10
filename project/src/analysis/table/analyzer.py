@@ -145,6 +145,25 @@ def _analyze_single_table_block(
 ) -> Dict[str, Any]:
     bbox = block.get("bbox")
 
+    if block.get("vector_cells"):
+        # Cells already read from the PDF text and boxes (vector_table.py);
+        # image recognition would misread arrow notes as cells.
+        cells = block["vector_cells"]
+        output = {
+            "analysis": {
+                "status": "success",
+                "model": {"name": "pdf-vector-table", "version": None},
+                "confidence": None,
+                "result": {
+                    "kind": "table",
+                    "row_count": max(cell["row"] for cell in cells) + 1,
+                    "column_count": max(cell["column"] for cell in cells) + 1,
+                    "cells": cells,
+                },
+            },
+            "warnings": ["PDF 글자와 칸 표시로 복원한 표입니다. 빈칸은 원본의 답을 쓰는 칸입니다."],
+        }
+        return _assemble_table_record(page_id, block, blocks, block_index, bbox, page_image_path, output)
     if page_image_path and bbox:
         output = analyze_table_block(page_image_path, bbox, lang=lang, engine=engine)
     else:
@@ -342,7 +361,7 @@ def _assemble_table_record(
     previous_block_id = get_neighbor_block_id(blocks, block_index - 1)
     next_block_id = get_neighbor_block_id(blocks, block_index + 1)
 
-    return {
+    record = {
         "schema_version": "1.0.0",
         "page_id": page_id,
         "block_id": block.get("block_id"),
@@ -365,6 +384,18 @@ def _assemble_table_record(
         },
         "warnings": output["warnings"],
     }
+    # Mostly unreadable cells usually means a screenshot, not a table: suggest
+    # omitting it rather than exporting a grid of garbage (BF2016 §6.4.1).
+    # The reviewer can switch it back to a table.
+    cells = ((output["analysis"] or {}).get("result") or {}).get("cells") or []
+    if cells and sum(not cell.get("text") for cell in cells) >= len(cells) / 2:
+        record["braille_review"] = {
+            "suggested_visual_treatment": "omit",
+            "treatment_reason": "칸 대부분을 읽지 못해 화면 캡처 같은 그림으로 보이므로 생략을 제안한다.",
+            "treatment_rationale": ["BF2016-6.4.1"],
+            "suggested_by": "rule",
+        }
+    return record
 
 
 def get_neighbor_block_id(blocks: List[Dict[str, Any]], index: int) -> Optional[str]:
