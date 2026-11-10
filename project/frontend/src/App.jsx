@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import "./libraryEnhancements.css";
+import { buildReviewLogExport, withReviewLog } from "./reviewLog";
 import {
   accessibleHtmlFilename,
   buildAccessibleTextbookHtml,
@@ -1233,6 +1234,7 @@ function PageDescriptionView({
   onMoveBlock,
   onUpdateFigureTreatment,
   onConfirmSuggestions,
+  onRestoreOriginalOrder,
   onUpdateReview,
   onUpdateBlock,
   onAddFigure,
@@ -1530,6 +1532,40 @@ function PageDescriptionView({
               </ul>
             )}
           </section>
+          {(result.page?.structure_changes || []).length > 0 && (
+            <details className="review-checklist structure-changes">
+              <summary>
+                <strong>AI가 자동으로 바꾼 것 {result.page.structure_changes.length}개</strong>
+                <span className="structure-changes-hint"> · 점역 지침에 맞추려고 구조를 고쳤습니다. 맞는지 확인하세요.</span>
+              </summary>
+              {result.page.structure_changes.some((change) => change.kind === "moved") && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onRestoreOriginalOrder}
+                  title="자동으로 옮긴 그림과 날개를 원본 교과서의 순서로 되돌립니다."
+                >
+                  원본 순서로 되돌리기
+                </button>
+              )}
+              <ul>
+                {result.page.structure_changes.map((change, index) => {
+                  const block = (result.page?.blocks || []).find((candidate) => candidate.block_id === change.block_id);
+                  const name = block?.type === "figure" ? figureNames.get(block.block_id) : blockTypeLabel(block?.type);
+                  return (
+                    <li key={`${change.block_id}-${change.kind}-${index}`}>
+                      {block?.type === "figure" ? (
+                        <button type="button" className="checklist-jump" onClick={() => setSelectedFigure(block)}>
+                          {name}
+                        </button>
+                      ) : <strong>{name}</strong>}
+                      <span>{change.message}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
           {editing ? (
             <>
               {selectedBlock && (
@@ -2307,7 +2343,12 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [activeProjectId, result, resultOwnerId]);
 
+  function logReview(entry) {
+    setResult((current) => withReviewLog(current, entry));
+  }
+
   function updatePageDescription(text) {
+    logReview({ action: "edit_description" });
     setResult((current) => {
       if (!current?.page_description) return current;
       return {
@@ -2323,6 +2364,13 @@ export default function App() {
   }
 
   function updateFigureTreatment(blockId, visualTreatment) {
+    const analysis = (result?.semantic_analyses || []).find((item) => item.block_id === blockId);
+    logReview({
+      action: "treatment",
+      block_id: blockId,
+      to: visualTreatment,
+      suggested: analysis?.braille_review?.suggested_visual_treatment || null,
+    });
     setResult((current) => {
       if (!current?.page?.blocks) return current;
       const figureBlock = current.page.blocks.find(
@@ -2382,6 +2430,28 @@ export default function App() {
     );
   }
 
+  function restoreOriginalOrder() {
+    logReview({ action: "restore_order" });
+    setResult((current) => {
+      const blocks = current?.page?.blocks || [];
+      // Blocks added by hand have no print position; leave the order alone then.
+      if (!blocks.length || !blocks.every((block) => Number.isFinite(Number(block.original_reading_order)))) {
+        return current;
+      }
+      return {
+        ...current,
+        page: {
+          ...current.page,
+          blocks: blocks.map((block) => ({ ...block, reading_order: Number(block.original_reading_order) })),
+        },
+        page_description: current.page_description
+          ? { ...current.page_description, review_status: "needs_review" }
+          : current.page_description,
+      };
+    });
+    showToast("원본 교과서 순서로 되돌렸어요. 옮긴 그림의 점역자 주도 함께 사라집니다.");
+  }
+
   function confirmSuggestedTreatments() {
     // Count from the rendered state: the updater below may run after the toast.
     const confirmed = (result?.semantic_analyses || []).filter((analysis) => (
@@ -2406,10 +2476,12 @@ export default function App() {
           : current.page_description,
       };
     });
+    logReview({ action: "confirm_suggestions", count: confirmed });
     showToast(`처리 방식 제안 ${confirmed}개를 확정했어요.`);
   }
 
   function updatePageReview(reviewStatus, reviewer) {
+    logReview({ action: "review_status", to: reviewStatus, reviewer });
     const reviewedAt = new Date().toISOString();
     setResult((current) => {
       if (!current?.page_description) return current;
@@ -2444,6 +2516,7 @@ export default function App() {
 
   async function updatePageBlock(blockId, changes) {
     const { reanalyze = false, ...blockChanges } = changes;
+    logReview({ action: "edit_block", block_id: blockId, fields: Object.keys(blockChanges), reanalyze });
     const applyBlockChanges = (current) => {
       if (!current?.page?.blocks) return current;
       const previousBlocks = current.page.blocks;
@@ -2599,6 +2672,7 @@ export default function App() {
   }
 
   function addMissingFigure(bbox) {
+    logReview({ action: "add_figure" });
     setResult((current) => {
       if (!current?.page?.blocks) return current;
       const pageId = current.page.page_id;
@@ -2657,6 +2731,7 @@ export default function App() {
   }
 
   function deletePageBlock(blockId) {
+    logReview({ action: "delete_block", block_id: blockId });
     setResult((current) => {
       if (!current?.page?.blocks) return current;
       const previousBlocks = current.page.blocks;
@@ -2691,6 +2766,7 @@ export default function App() {
   }
 
   function updateBrailleReadingOrder(blockId, direction, targetBlockId = null) {
+    logReview({ action: "reorder", block_id: blockId, direction, target: targetBlockId });
     setResult((current) => {
       if (!current?.page?.blocks) return current;
       const previousBlocks = current.page.blocks;
@@ -2777,6 +2853,14 @@ export default function App() {
     const html = buildAccessibleTextbookHtml({ title, pages });
     downloadAccessibleHtml(html, accessibleHtmlFilename(title));
     showToast(`${pages.length}개 페이지를 접근성 HTML로 만들었어요.`);
+  }
+
+  function downloadReviewLog() {
+    const { title, pages } = textbookExportPages();
+    const base = accessibleHtmlFilename(title, "").replace(/_\.html$/, "");
+    const exported = buildReviewLogExport({ title, pages });
+    downloadTextFile(JSON.stringify(exported, null, 2), `${base}_검수기록.json`, "application/json;charset=utf-8");
+    showToast(`${exported.pages.length}개 페이지의 검수 기록을 내보냈어요.`);
   }
 
   async function downloadBrailleExports() {
@@ -3793,6 +3877,16 @@ export default function App() {
                   점역 자료 다운로드
                 </button>
               )}
+              {savedPages.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button textbook-html-download"
+                  onClick={downloadReviewLog}
+                  title="검수자가 AI 제안을 수용·변경한 기록과 페이지별 요약(JSON)을 내려받습니다."
+                >
+                  검수 기록 내보내기
+                </button>
+              )}
             </section>
             </>
           )}
@@ -3888,6 +3982,7 @@ export default function App() {
               onMoveBlock={updateBrailleReadingOrder}
               onUpdateFigureTreatment={updateFigureTreatment}
               onConfirmSuggestions={confirmSuggestedTreatments}
+              onRestoreOriginalOrder={restoreOriginalOrder}
               onUpdateReview={updatePageReview}
               onUpdateBlock={updatePageBlock}
               onAddFigure={addMissingFigure}

@@ -7536,3 +7536,21 @@ select:focus {
 .review-checklist ul {
   padding-left: 0;
 }
+
+.structure-changes {
+  background: #f3f7fb;
+  border-color: #cddbe8;
+}
+
+.structure-changes summary {
+  cursor: pointer;
+}
+
+.structure-changes-hint {
+  color: #52626d;
+  font-size: 12px;
+}
+
+.structure-changes > button {
+  margin-top: 8px;
+}
