@@ -28,6 +28,7 @@ from page_pipeline import process_single_page
 from analysis.formula.formula_analyzer import analyze_formula_blocks
 from analysis.figure import analyze_figure_blocks, create_openai_figure_engine
 from analysis.table import analyze_table_blocks, reconcile_reclassified_table_blocks
+from braille_draft import edit_text_to_braille_draft
 from page_description import build_page_description
 
 app = FastAPI(title="Textbook Layout Parser API")
@@ -311,6 +312,15 @@ async def analyze_page(
             "figure_caption_model": figure_engine.captioner.model_name if figure_engine is not None else None,
             "api_usage": _summarize_api_usage(semantic_analyses),
         }
+
+
+@app.post("/api/braille-draft")
+async def braille_draft(text: str = Form(...)):
+    """Automatic braille draft of the braille-edit text export (needs review)."""
+    try:
+        return {"braille": edit_text_to_braille_draft(text)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/analyze-block")

@@ -8,6 +8,9 @@ const moduleSource = await readFile(
 );
 const {
   buildBrailleReadingPlan,
+  figureDisplayNames,
+  figureRelocationNote,
+  figureVisualTreatment,
   brailleReadingWarnings,
   linkedFigureCaptions,
   moveBrailleReadingGroup,
@@ -121,21 +124,43 @@ test("allows a linked caption to move independently when selected directly", () 
   );
 });
 
-test("reports missing descriptions and unlinked captions without changing content", () => {
-  const warnings = brailleReadingWarnings({
+test("review checklist points at each block that still needs a decision", () => {
+  const items = brailleReadingWarnings({
     blocks: [
       { block_id: "figure", type: "figure", reading_order: 1 },
       { block_id: "caption", type: "caption", reading_order: 2 },
+      { block_id: "graph", type: "figure", reading_order: 3 },
+      { block_id: "shot", type: "table", reading_order: 4 },
     ],
-  }, []);
+  }, [
+    {
+      block_id: "graph",
+      description: { long_text: "눈금 30[확인 필요], 180[확인 필요]" },
+      braille_review: { suggested_visual_treatment: "tactile_graphic", treatment_reason: "그래프는 촉도 우선" },
+    },
+    { block_id: "shot", type: "table", warnings: ["35개 셀의 텍스트를 인식하지 못했습니다."] },
+  ]);
 
-  assert.equal(warnings.length, 3);
-  assert.ok(warnings.some((warning) => /figure.*설명/.test(warning)));
-  assert.ok(warnings.some((warning) => /figure.*검수/.test(warning)));
-  assert.ok(warnings.some((warning) => /1개/.test(warning)));
+  const kinds = items.map((item) => `${item.blockId}:${item.kind}`);
+  assert.deepEqual(kinds, [
+    "figure:treatment", "figure:note",
+    "graph:treatment", "graph:verify",
+    "shot:table",
+    "caption:caption",
+  ]);
+  assert.match(items[2].message, /"촉도" 제안을 확정하세요 \(그래프는 촉도 우선\)/);
+  assert.match(items[3].message, /2개/);
 });
 
-test("groups an explicitly linked source caption after its figure", () => {
+test("a confirmed treatment clears the treatment item", () => {
+  const items = brailleReadingWarnings(
+    { blocks: [{ block_id: "graph", type: "figure", reading_order: 1 }] },
+    [{ block_id: "graph", braille_review: { visual_treatment: "tactile_graphic" } }],
+  );
+  assert.deepEqual(items, []);
+});
+
+test("groups an explicitly linked source caption before its figure", () => {
   const blocks = [
     { block_id: "caption", type: "caption", text: "source caption", reading_order: 1 },
     { block_id: "figure", type: "figure", reading_order: 2 },
@@ -153,6 +178,65 @@ test("groups an explicitly linked source caption after its figure", () => {
   const plan = buildBrailleReadingPlan({ blocks }, analyses);
   assert.deepEqual(
     plan.map((item) => [item.type, item.order]),
-    [["figure", 1], ["caption", 2]],
+    [["caption", 1], ["figure", 2]],
   );
+});
+
+test("uses the rule-based treatment suggestion until the reviewer chooses", () => {
+  assert.equal(figureVisualTreatment({}), "transcriber_note");
+  assert.equal(
+    figureVisualTreatment({ braille_review: { suggested_visual_treatment: "tactile_graphic" } }),
+    "tactile_graphic",
+  );
+  assert.equal(
+    figureVisualTreatment({
+      braille_review: { suggested_visual_treatment: "tactile_graphic", visual_treatment: "omit" },
+    }),
+    "omit",
+  );
+});
+
+test("a figure moved away from its print position gets an original-position note", () => {
+  const blocks = [
+    { block_id: "stem", type: "paragraph", text: "다음 물음에 답하시오.", reading_order: 1, original_reading_order: 1 },
+    { block_id: "fig", type: "figure", reading_order: 2, original_reading_order: 4 },
+    { block_id: "q1", type: "paragraph", text: "⑴ 높이를 구하시오.", reading_order: 3, original_reading_order: 2 },
+    { block_id: "q2", type: "paragraph", text: "⑵ 대관람차가 한 바퀴 회전하는 데 걸린 시간을 구하시오.", reading_order: 4, original_reading_order: 3 },
+    { block_id: "q3", type: "paragraph", text: "⑶ 횟수를 구하시오.", reading_order: 5, original_reading_order: 5 },
+  ];
+
+  assert.equal(
+    figureRelocationNote(blocks, "fig"),
+    '원래 이 그림은 "⑵ 대관람차가 한 바퀴 회전하는 데 …" 다음에 있다.',
+  );
+  assert.equal(figureRelocationNote(blocks, "q1"), null);
+  const unmoved = blocks.map((block) => ({ ...block, reading_order: block.original_reading_order }));
+  assert.equal(figureRelocationNote(unmoved, "fig"), null);
+  assert.equal(figureRelocationNote(blocks.map(({ original_reading_order, ...rest }) => rest), "fig"), null);
+});
+
+test("figures get human names in reading order for the review UI", () => {
+  const names = figureDisplayNames(
+    [
+      { block_id: "p6_b8", type: "figure", reading_order: 2 },
+      { block_id: "p6_b4", type: "figure", reading_order: 1 },
+    ],
+    [{ block_id: "p6_b8", figure_type: "graph" }, { block_id: "p6_b4", figure_type: "photo" }],
+  );
+  assert.equal(names.get("p6_b4"), "그림 1 (사진)");
+  assert.equal(names.get("p6_b8"), "그림 2 (그래프)");
+});
+
+test("an unreadable table suggested for omission is a decision to confirm", () => {
+  const items = brailleReadingWarnings(
+    { blocks: [{ block_id: "shot", type: "table", reading_order: 1 }] },
+    [{
+      block_id: "shot",
+      type: "table",
+      warnings: ["35개 셀의 텍스트를 인식하지 못했습니다."],
+      braille_review: { suggested_visual_treatment: "omit" },
+    }],
+  );
+  assert.deepEqual(items.map((item) => item.kind), ["treatment"]);
+  assert.match(items[0].message, /"생략"을 제안/);
 });

@@ -4,10 +4,18 @@ import "./libraryEnhancements.css";
 import {
   accessibleHtmlFilename,
   buildAccessibleTextbookHtml,
+  buildBrailleEditText,
+  buildTactileWorklistCsv,
   downloadAccessibleHtml,
+  downloadTextFile,
 } from "./accessibleHtml";
 import {
+  blockTypeLabel,
+  brailleReadingWarnings,
+  figureDisplayNames,
+  figureVisualTreatment,
   moveBrailleReadingGroup,
+  tableOmitted as isTableOmitted,
   normalizeTaggedPageDescription,
   placeBrailleReadingGroup,
   reorderTaggedPageDescription,
@@ -267,6 +275,16 @@ function Seconds({ value }) {
   return <span>{typeof value === "number" ? `${value.toFixed(2)}초` : "미제공"}</span>;
 }
 
+const REVIEW_STATUS_LABELS = {
+  unreviewed: "검수 전",
+  needs_review: "재검수 필요",
+  reviewed: "검수 완료",
+};
+
+function reviewStatusLabel(status) {
+  return REVIEW_STATUS_LABELS[status] || status || "검수 전";
+}
+
 function ProcessingState({ status, elapsedSeconds }) {
   const counting = status === "counting";
   return (
@@ -364,7 +382,7 @@ function DescriptionResult({ description, captioningEnabled, type }) {
       )}
       <div><strong>접근성 설명</strong><p>{description.long_text || description.short_text || "없음"}</p></div>
       <div><strong>점역 참고</strong><p>{description.transcription_notes || "없음"}</p></div>
-      <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
+      <span className={`review-badge ${description.review_status}`}>{reviewStatusLabel(description.review_status)}</span>
     </div>
   );
 }
@@ -997,6 +1015,10 @@ function LinkedPageDescription({
     () => new Map((semanticAnalyses || []).map((item) => [item.block_id, item])),
     [semanticAnalyses],
   );
+  const figureNames = useMemo(
+    () => figureDisplayNames(blocks || [], semanticAnalyses || []),
+    [blocks, semanticAnalyses],
+  );
   const blocksByType = new Map();
   orderedBlocks.forEach((block) => {
     if (!blocksByType.has(block.type)) blocksByType.set(block.type, []);
@@ -1099,11 +1121,37 @@ function LinkedPageDescription({
       },
     };
 
+    if (type === "table") {
+      // Real tables must be transcribed as tables; "생략" is only for
+      // screenshots or images misdetected as tables.
+      const tableOmitted = isTableOmitted(analysesByBlockId.get(block.block_id));
+      return (
+        <div key={block.block_id || index} {...rowProps}>
+          {moveHandle}
+          <span className="block-type-chip">{blockTypeLabel(type)}</span>
+          <span className="page-description-line">
+            {tableOmitted ? <strong className="omitted-label">(그림 생략) 표시만 남김</strong> : taggedMatch[2]}
+          </span>
+          <button
+            type="button"
+            className={`inline-visual-treatment-toggle omit ${tableOmitted ? "active" : ""}`}
+            aria-pressed={tableOmitted}
+            title={tableOmitted ? "표로 점역하도록 되돌리기" : "화면 캡처 등 표가 아닌 그림이면 생략으로 표시"}
+            onClick={() => onUpdateFigureTreatment(block.block_id, tableOmitted ? "table" : "omit")}
+          >
+            <span aria-hidden="true">{tableOmitted ? "↩" : "⊘"}</span>
+            {tableOmitted ? "표로 되돌리기" : "표 아님·생략"}
+          </button>
+        </div>
+      );
+    }
+
     if (type !== "figure") {
       return (
         <div key={block.block_id || index} {...rowProps}>
           {moveHandle}
-          <span className="page-description-line">{line}</span>
+          <span className="block-type-chip">{block.role === "sidebar" ? "날개" : blockTypeLabel(type)}</span>
+          <span className="page-description-line">{taggedMatch[2]}</span>
         </div>
       );
     }
@@ -1111,17 +1159,13 @@ function LinkedPageDescription({
     const generatedText = taggedMatch[2] || "";
     const noteText = String(generatedText).trim();
     const figureAnalysis = analysesByBlockId.get(block.block_id);
-    const visualTreatment = (
-      figureAnalysis?.braille_review?.visual_treatment
-      || figureAnalysis?.braille_review?.production_mode
-      || "transcriber_note"
-    );
+    const visualTreatment = figureVisualTreatment(figureAnalysis);
+    const confirmed = Boolean(figureAnalysis?.braille_review?.visual_treatment);
+    const suggestedTreatment = figureAnalysis?.braille_review?.suggested_visual_treatment;
+    const suggestionReason = !confirmed && figureAnalysis?.braille_review?.treatment_reason;
     const isTactileGraphic = visualTreatment === "tactile_graphic";
     const isOmitted = visualTreatment === "omit";
-    const previousVisualTreatment = (
-      figureAnalysis?.braille_review?.previous_visual_treatment
-      || "transcriber_note"
-    );
+    const figureName = figureNames.get(block.block_id) || "그림";
     return (
       <div key={block.block_id || index} {...rowProps}>
         {moveHandle}
@@ -1132,49 +1176,42 @@ function LinkedPageDescription({
             : (isTactileGraphic ? "is-tactile-graphic" : "is-transcriber-note"),
         ].join(" ")}>
           <div className="figure-description-meta">
-            <button
-              type="button"
-              className={`inline-visual-treatment-toggle ${isTactileGraphic ? "tactile" : "note"}`}
-              aria-pressed={isTactileGraphic}
-              title={isOmitted
-                ? "이미지 생략을 취소하고 점역자 주로 복원"
-                : isTactileGraphic
-                ? "점역자 주 방식으로 변경"
-                : "촉각 그래픽 제작 대상으로 변경"}
-              onClick={() => onUpdateFigureTreatment(
-                block.block_id,
-                isOmitted
-                  ? "transcriber_note"
-                  : (isTactileGraphic ? "transcriber_note" : "tactile_graphic"),
-              )}
-            >
-              <span aria-hidden="true">{isOmitted ? "↩" : (isTactileGraphic ? "▧" : "✓")}</span>
-              {isOmitted
-                ? "점역자 주로 복원"
-                : (isTactileGraphic ? "촉각 그래픽 제작 대상" : "점역자 주")}
-            </button>
-            <button
-              type="button"
-              className={`inline-visual-treatment-toggle omit ${isOmitted ? "active" : ""}`}
-              aria-pressed={isOmitted}
-              title={isOmitted
-                ? "이미지 생략 취소"
-                : "최종 접근성 자료와 HTML에서 이 이미지 설명 생략"}
-              onClick={() => onUpdateFigureTreatment(
-                block.block_id,
-                isOmitted ? previousVisualTreatment : "omit",
-              )}
-            >
-              <span aria-hidden="true">{isOmitted ? "↩" : "⊘"}</span>
-              {isOmitted ? "생략 취소" : "이미지 생략"}
-            </button>
-            <span className="figure-tag">[figure]</span>
+            <span className="figure-tag">{figureName}</span>
+            <div className="treatment-segmented" role="group" aria-label={`${figureName} 처리 방식`}>
+              {[
+                ["tactile_graphic", "촉도", "촉각 그래픽으로 제작합니다. 자료에는 [촉도 n] 자리만 남습니다."],
+                ["transcriber_note", "점역자 주", "그림을 점역자 주 글로 설명합니다."],
+                ["omit", "생략", "설명 없이 원문 캡션과 (그림 생략) 표시만 남깁니다."],
+              ].map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={visualTreatment === value ? "active" : ""}
+                  aria-pressed={visualTreatment === value}
+                  title={hint}
+                  onClick={() => onUpdateFigureTreatment(block.block_id, value)}
+                >
+                  {label}
+                  {!confirmed && suggestedTreatment === value && <small className="ai-suggested">AI 제안</small>}
+                </button>
+              ))}
+            </div>
+            {suggestionReason && (
+              <span className="figure-treatment-suggestion" title="규정 기반 자동 제안 — 검수 후 확정하세요">
+                제안: {suggestionReason}
+              </span>
+            )}
           </div>
           <div className="figure-description-content">
             <span className="figure-description-copy">
-              {isOmitted
-                ? <strong className="omitted-label">최종 자료에서 생략됨</strong>
-                : (noteText || "Figure 설명을 작성해 주세요.")}
+              {isOmitted ? <strong className="omitted-label">(그림 생략) 표시만 남김</strong> : (
+                <>
+                  <span className="ai-draft-label">
+                    {isTactileGraphic ? "촉도 사양 · AI 초안 (촉도 제작자 참고용)" : "점역자 주 · AI 초안"}
+                  </span>
+                  {noteText || "설명을 작성해 주세요."}
+                </>
+              )}
             </span>
             <button
               className={`figure-reference inline ${selectedFigure?.block_id === block.block_id ? "active" : ""}`}
@@ -1195,12 +1232,32 @@ function PageDescriptionView({
   onUpdateDescription,
   onMoveBlock,
   onUpdateFigureTreatment,
+  onConfirmSuggestions,
   onUpdateReview,
   onUpdateBlock,
   onAddFigure,
   onDeleteBlock,
 }) {
   const description = result.page_description;
+  const checklist = useMemo(
+    () => brailleReadingWarnings(result.page, result.semantic_analyses || []),
+    [result.page, result.semantic_analyses],
+  );
+  const unconfirmedCount = checklist.filter((item) => item.kind === "treatment").length;
+  const figureNames = useMemo(
+    () => figureDisplayNames(result.page?.blocks || [], result.semantic_analyses || []),
+    [result.page, result.semantic_analyses],
+  );
+  // One row per block, so a figure with three issues is one line, not three.
+  const checklistGroups = useMemo(() => {
+    const groups = new Map();
+    checklist.forEach((item) => {
+      const key = item.blockId || `page-${item.kind}`;
+      if (!groups.has(key)) groups.set(key, { blockId: item.blockId, messages: [] });
+      groups.get(key).messages.push(item.message);
+    });
+    return [...groups.values()];
+  }, [checklist]);
   const [selectedFigure, setSelectedFigure] = useState(null);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -1430,9 +1487,49 @@ function PageDescriptionView({
             <p>
               각 태그 앞의 <strong>⠿ 손잡이</strong>를 끌어 읽기 순서를 바꿀 수 있습니다.
               Figure 원본 보기를 누르면 왼쪽에서 실제 영역을 확인할 수 있습니다.
-              <strong>점역자 주</strong> 표시를 누르면 촉각 그래픽 제작 대상으로 전환됩니다.
+              그림마다 <strong>촉도 · 점역자 주 · 생략</strong> 중 처리 방식을 고르세요.
+              <strong> AI 제안</strong> 표시는 점역 규정에 따른 자동 제안이며, 눌러야 확정됩니다.
             </p>
           </div>
+          <section className="review-checklist" aria-label="점역 검수 체크리스트">
+            <div className="review-checklist-header">
+              <strong>
+                {checklist.length ? `확인할 항목 ${checklistGroups.length}개` : "확인할 항목이 없습니다"}
+              </strong>
+              {unconfirmedCount > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onConfirmSuggestions}
+                  title="AI 제안을 한 번에 확정합니다. 확정 후에도 그림마다 바꿀 수 있습니다."
+                >
+                  AI 제안 {unconfirmedCount}개 모두 확정
+                </button>
+              )}
+            </div>
+            {checklistGroups.length > 0 && (
+              <ul>
+                {checklistGroups.map((group) => {
+                  const block = (result.page?.blocks || []).find((candidate) => candidate.block_id === group.blockId);
+                  const name = block?.type === "figure"
+                    ? figureNames.get(block.block_id)
+                    : block
+                      ? `${blockTypeLabel(block.type)} "${String(block.text || "").replace(/\s+/g, " ").slice(0, 15)}"`
+                      : "페이지";
+                  return (
+                    <li key={group.blockId || group.messages[0]}>
+                      {block?.type === "figure" ? (
+                        <button type="button" className="checklist-jump" onClick={() => setSelectedFigure(block)}>
+                          {name}
+                        </button>
+                      ) : <strong>{name}</strong>}
+                      <span>{group.messages.join(" · ")}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
           {editing ? (
             <>
               {selectedBlock && (
@@ -1506,7 +1603,7 @@ function PageDescriptionView({
           )}
           <div className="review-footer">
             <div className="review-status-summary">
-              <span className={`review-badge ${description.review_status}`}>{description.review_status}</span>
+              <span className={`review-badge ${description.review_status}`}>{reviewStatusLabel(description.review_status)}</span>
               {description.was_generated && <span>모델 다듬기 적용</span>}
               {description.review?.history?.length > 0 && (
                 <span>
@@ -1534,6 +1631,13 @@ function PageDescriptionView({
                   const reviewer = reviewerName.trim();
                   if (!reviewer) {
                     window.alert("검수자 이름을 입력해 주세요.");
+                    return;
+                  }
+                  if (
+                    description.review_status !== "reviewed"
+                    && checklist.length > 0
+                    && !window.confirm(`체크리스트에 확인하지 않은 항목이 ${checklist.length}개 있습니다. 그래도 검수 완료로 표시할까요?`)
+                  ) {
                     return;
                   }
                   window.localStorage.setItem(
@@ -1806,6 +1910,7 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [analysisJob, setAnalysisJob] = useState(null);
+  const [finishedJob, setFinishedJob] = useState(null);
   const [error, setError] = useState("");
   const [activeView, setActiveView] = useState("layout");
   const [activeElementType, setActiveElementType] = useState("formula");
@@ -1933,6 +2038,17 @@ export default function App() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [status, analysisJob]);
+
+  useEffect(() => {
+    const baseTitle = "EduBridge";
+    if (analysisJob) {
+      document.title = `⏳ ${analysisJob.pageNumber}페이지 분석 중 · ${baseTitle}`;
+    } else if (finishedJob) {
+      document.title = `${finishedJob.ok ? "✅" : "⚠️"} ${finishedJob.pageNumber}페이지 분석 ${finishedJob.ok ? "완료" : "실패"} · ${baseTitle}`;
+    } else {
+      document.title = baseTitle;
+    }
+  }, [analysisJob, finishedJob]);
 
   useEffect(() => {
     window.localStorage.setItem(LIBRARY_META_KEY, JSON.stringify(libraryMeta));
@@ -2107,6 +2223,7 @@ export default function App() {
       pageNumber: targetPageNumber,
       startedAt: Date.now(),
     });
+    setFinishedJob(null);
     setError("");
     const previousTargetPage = savedPages.find(
       (savedPage) => savedPage.pageNumber === targetPageNumber,
@@ -2152,9 +2269,16 @@ export default function App() {
         setActiveView("layout");
       }
       showToast(`${targetPageNumber}페이지 분석이 완료되었어요.`);
+      setFinishedJob({
+        projectId: targetProjectId,
+        pageNumber: targetPageNumber,
+        ok: true,
+        viewing: activeProjectIdRef.current === targetProjectId && pageNumberRef.current === targetPageNumber,
+      });
     } catch (err) {
       if (activeProjectIdRef.current === targetProjectId) setError(err.message);
       showToast(`${targetPageNumber}페이지 분석에 실패했어요.`, "error");
+      setFinishedJob({ projectId: targetProjectId, pageNumber: targetPageNumber, ok: false, viewing: false });
     } finally {
       setAnalysisJob(null);
     }
@@ -2202,7 +2326,7 @@ export default function App() {
     setResult((current) => {
       if (!current?.page?.blocks) return current;
       const figureBlock = current.page.blocks.find(
-        (block) => block.block_id === blockId && block.type === "figure",
+        (block) => block.block_id === blockId && (block.type === "figure" || block.type === "table"),
       );
       if (!figureBlock) return current;
 
@@ -2223,7 +2347,7 @@ export default function App() {
           ...(visualTreatment === "omit"
             ? {
                 previous_visual_treatment: (
-                  existingAnalysis.braille_review?.visual_treatment === "tactile_graphic"
+                  figureVisualTreatment(existingAnalysis) === "tactile_graphic"
                     ? "tactile_graphic"
                     : "transcriber_note"
                 ),
@@ -2248,12 +2372,41 @@ export default function App() {
       };
     });
     showToast(
-      visualTreatment === "tactile_graphic"
+      visualTreatment === "table"
+        ? "표로 점역하도록 되돌렸어요."
+        : visualTreatment === "tactile_graphic"
         ? "촉각 그래픽 제작 대상으로 표시했어요."
         : visualTreatment === "omit"
           ? "최종 접근성 자료에서 이미지를 생략하도록 표시했어요."
           : "점역자 주 방식으로 표시했어요.",
     );
+  }
+
+  function confirmSuggestedTreatments() {
+    // Count from the rendered state: the updater below may run after the toast.
+    const confirmed = (result?.semantic_analyses || []).filter((analysis) => (
+      (analysis.type === "figure" || analysis.type === "table")
+      && analysis.braille_review?.suggested_visual_treatment
+      && !analysis.braille_review?.visual_treatment
+    )).length;
+    setResult((current) => {
+      if (!current?.semantic_analyses) return current;
+      const analyses = current.semantic_analyses.map((analysis) => {
+        const review = analysis.braille_review;
+        if (!["figure", "table"].includes(analysis.type) || !review?.suggested_visual_treatment || review.visual_treatment) {
+          return analysis;
+        }
+        return { ...analysis, braille_review: { ...review, visual_treatment: review.suggested_visual_treatment } };
+      });
+      return {
+        ...current,
+        semantic_analyses: analyses,
+        page_description: current.page_description
+          ? { ...current.page_description, review_status: "needs_review" }
+          : current.page_description,
+      };
+    });
+    showToast(`처리 방식 제안 ${confirmed}개를 확정했어요.`);
   }
 
   function updatePageReview(reviewStatus, reviewer) {
@@ -2607,18 +2760,43 @@ export default function App() {
     showToast("현재 페이지의 접근성 HTML을 만들었어요.");
   }
 
-  function downloadTextbookHtml() {
+  function textbookExportPages() {
     const project = projects.find((item) => item.id === activeProjectId);
     const title = project ? libraryProjectName(project) : file?.name || "교과서";
     const pages = savedPages.map((page) => page.result);
     if (result && resultOwnerId === activeProjectId) {
-      // The HTML builder keeps the last value for a duplicate page number,
+      // The export builders keep the last value for a duplicate page number,
       // so an on-screen edit wins even before the debounced auto-save ends.
       pages.push(result);
     }
+    return { title, pages };
+  }
+
+  function downloadTextbookHtml() {
+    const { title, pages } = textbookExportPages();
     const html = buildAccessibleTextbookHtml({ title, pages });
     downloadAccessibleHtml(html, accessibleHtmlFilename(title));
     showToast(`${pages.length}개 페이지를 접근성 HTML로 만들었어요.`);
+  }
+
+  async function downloadBrailleExports() {
+    const { title, pages } = textbookExportPages();
+    const base = accessibleHtmlFilename(title, "").replace(/_\.html$/, "");
+    const editText = buildBrailleEditText({ pages });
+    downloadTextFile(editText, `${base}_점역편집용.txt`);
+    downloadTextFile(buildTactileWorklistCsv({ pages }), `${base}_촉도작업목록.csv`, "text/csv;charset=utf-8");
+    // The braille draft needs the backend (braillify); the two files above do not.
+    try {
+      const formData = new FormData();
+      formData.append("text", editText);
+      const response = await fetch(`${API_BASE}/api/braille-draft`, { method: "POST", body: formData });
+      if (!response.ok) throw new Error(await parseError(response));
+      const { braille } = await response.json();
+      downloadTextFile(braille, `${base}_점자초안(검수용).txt`);
+      showToast(`${pages.length}개 페이지의 점역 편집용 텍스트, 촉도 작업 목록, 점자 초안을 만들었어요.`);
+    } catch (err) {
+      showToast(`점역 편집용 텍스트와 촉도 작업 목록은 만들었지만 점자 초안은 만들지 못했어요. ${err.message}`, "error");
+    }
   }
 
   function currentPageHtmlSource() {
@@ -2638,8 +2816,9 @@ export default function App() {
   const activeProjectIsAnalyzing = analysisJob?.projectId === activeProjectId;
   const currentPageIsAnalyzing = activeProjectIsAnalyzing
     && analysisJob?.pageNumber === pageNumber;
-  const showProcessingState = status === "counting"
-    || (currentPageIsAnalyzing && !result);
+  // While this page is being (re)analyzed, show progress, not the previous
+  // saved result; it comes back only if the new analysis fails.
+  const showProcessingState = status === "counting" || currentPageIsAnalyzing;
   const activeProjects = projects.filter((project) => !libraryMeta[project.id]?.trashed);
   const trashedProjects = projects.filter((project) => libraryMeta[project.id]?.trashed);
   const groupedProjects = activeGroup === "trash"
@@ -2790,8 +2969,30 @@ export default function App() {
     { id: "page", label: "접근성 페이지" },
   ];
 
+  const finishedPage = finishedJob?.ok
+    ? savedPages.find((page) => page.pageNumber === finishedJob.pageNumber && page.projectId === finishedJob.projectId)
+    : null;
+
   return (
     <main className="app-shell">
+      {finishedJob && !finishedJob.viewing && (
+        <div className={`analysis-finished-banner ${finishedJob.ok ? "ok" : "failed"}`} role="status">
+          <span>
+            {finishedJob.ok
+              ? `${finishedJob.pageNumber}페이지 분석이 끝났어요.`
+              : `${finishedJob.pageNumber}페이지 분석에 실패했어요.`}
+          </span>
+          {finishedPage && (
+            <button
+              type="button"
+              onClick={() => { openSavedPage(finishedPage); setFinishedJob(null); }}
+            >
+              결과 보기
+            </button>
+          )}
+          <button type="button" aria-label="알림 닫기" onClick={() => setFinishedJob(null)}>닫기</button>
+        </div>
+      )}
       <section className="toolbar">
         <div className="brand">
           <div className="brand-mark">
@@ -3582,6 +3783,16 @@ export default function App() {
                   교과서 HTML 다운로드
                 </button>
               )}
+              {savedPages.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button textbook-html-download"
+                  onClick={downloadBrailleExports}
+                  title="점역 편집용 텍스트(.txt), 촉도 작업 목록(.csv), 자동 점자 초안(검수용 .txt)을 함께 내려받습니다"
+                >
+                  점역 자료 다운로드
+                </button>
+              )}
             </section>
             </>
           )}
@@ -3676,6 +3887,7 @@ export default function App() {
               onUpdateDescription={updatePageDescription}
               onMoveBlock={updateBrailleReadingOrder}
               onUpdateFigureTreatment={updateFigureTreatment}
+              onConfirmSuggestions={confirmSuggestedTreatments}
               onUpdateReview={updatePageReview}
               onUpdateBlock={updatePageBlock}
               onAddFigure={addMissingFigure}

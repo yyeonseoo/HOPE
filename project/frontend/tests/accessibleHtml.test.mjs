@@ -17,6 +17,8 @@ const bundledModuleSource = moduleSource.replace(
 const {
   accessibleHtmlFilename,
   buildAccessibleTextbookHtml,
+  buildBrailleEditText,
+  buildTactileWorklistCsv,
 } = await import(`data:text/javascript;base64,${Buffer.from(bundledModuleSource).toString("base64")}`);
 
 function samplePage(pageId = 2, paragraph = "관계를 살펴본다.") {
@@ -88,8 +90,8 @@ test("builds Korean semantic HTML for textbook blocks", () => {
   assert.match(html, /<h4>함수<\/h4>/);
   assert.match(html, /<math>/);
   assert.match(html, /<table>/);
-  assert.match(html, /<figcaption(?:\s|>)/);
-  assert.match(html, /오른쪽 위로 향하는 직선 그래프이다/);
+  assert.match(html, /<figure(?:\s|>)/);
+  assert.match(html, /점역자 주.*오른쪽 위로 향하는 직선 그래프이다/);
   assert.match(html, /href="#page-2"/);
 });
 
@@ -162,8 +164,9 @@ test("exports blocks in reading order and keeps a linked caption inside its figu
   }];
 
   const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
-  assert.ok(html.indexOf("먼저 읽는 본문") < html.indexOf("그래프 접근성 설명"));
-  assert.ok(html.indexOf("그래프 접근성 설명") < html.indexOf("그림 1 원문"));
+  // Braille order: source caption before the transcriber's note.
+  assert.ok(html.indexOf("먼저 읽는 본문") < html.indexOf("그림 1 원문"));
+  assert.ok(html.indexOf("그림 1 원문") < html.indexOf("그래프 접근성 설명"));
   assert.equal((html.match(/그림 1 원문/g) || []).length, 1);
 });
 
@@ -177,8 +180,9 @@ test("keeps braille production review metadata out of the student HTML", () => {
   };
 
   const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
-  assert.match(html, /그림 설명/);
-  assert.match(html, /오른쪽 위로 향하는 직선 그래프이다/);
+  // A tactile graphic replaces the AI description with a placeholder.
+  assert.match(html, /\[촉도 1\]/);
+  assert.doesNotMatch(html, /오른쪽 위로 향하는 직선 그래프이다/);
   assert.doesNotMatch(html, /점역자 검수 설명/);
   assert.doesNotMatch(html, /점역 변경·검수 기록/);
   assert.doesNotMatch(html, /복잡한 시각 요소를 설명문으로 대체함/);
@@ -186,7 +190,7 @@ test("keeps braille production review metadata out of the student HTML", () => {
   assert.doesNotMatch(html, /점역 참고 설명 · 검수 필요/);
 });
 
-test("omits a figure and its page-summary sentence from student HTML", () => {
+test("replaces an omitted figure with an omission marker instead of dropping it", () => {
   const page = samplePage(6);
   page.page_description = {
     text: [
@@ -200,7 +204,7 @@ test("omits a figure and its page-summary sentence from student HTML", () => {
   };
 
   const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
-  assert.doesNotMatch(html, /<figure(?:\s|>)/);
+  assert.match(html, /\(그림 생략\)/);
   assert.doesNotMatch(html, /오른쪽 위로 향하는 직선 그래프이다/);
   assert.match(html, /두 값의 관계를 살펴본다/);
 });
@@ -217,4 +221,71 @@ test("escapes textbook text and creates a safe filename", () => {
     accessibleHtmlFilename('수학:"교과서".pdf'),
     "수학__교과서__접근성자료.html",
   );
+});
+
+test("labels the printed page number from the footer, not the PDF sequence", () => {
+  const page = samplePage(3);
+  page.page.blocks.push({ block_id: "footer", type: "footer", text: "120  Ⅲ. 좌표평면과 그래프" });
+
+  const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+  assert.match(html, /\[원본 쪽 120\] \(PDF 3쪽\)/);
+});
+
+test("braille edit text follows guideline markers for each treatment", () => {
+  const page = samplePage(3);
+  page.page.blocks.push(
+    { block_id: "footer", type: "footer", text: "120  Ⅲ. 좌표평면과 그래프" },
+    { block_id: "icon", type: "figure" },
+    { block_id: "photo", type: "figure" },
+    { block_id: "tab", type: "title", text: "Ⅲ" },
+  );
+  page.semantic_analyses[1].analysis.result.cells.push({ row: 1, column: 1, text: "" });
+  page.semantic_analyses[2].braille_review = { suggested_visual_treatment: "tactile_graphic" };
+  page.semantic_analyses.push(
+    { block_id: "icon", type: "figure", braille_review: { suggested_visual_treatment: "omit" } },
+    { block_id: "photo", type: "figure", description: { long_text: "대관람차 사진이다." } },
+  );
+
+  const text = buildBrailleEditText({ pages: [page] });
+  assert.match(text, /^\[이 책의 점역자 주\]/);
+  assert.match(text, /\[원본 쪽 120\]/);
+  assert.match(text, /촉각 그래픽이 들어갈 자리/);
+  assert.match(text, /\[수식\] y=2x/);
+  assert.match(text, /x \| ==/);
+  assert.match(text, /\[촉도 1\]/);
+  assert.match(text, /,'그림 생략,'/);
+  assert.match(text, /,'대관람차 사진이다\.,'/);
+  assert.doesNotMatch(text, /오른쪽 위로 향하는 직선 그래프이다/);
+  assert.doesNotMatch(text, /\[제목\] Ⅲ/);
+});
+
+test("tactile worklist lists only tactile figures with their rationale", () => {
+  const page = samplePage(3);
+  page.semantic_analyses[2].braille_review = {
+    suggested_visual_treatment: "tactile_graphic",
+    treatment_reason: "그래프·도식은 촉도 제작을 우선한다.",
+    treatment_rationale: ["TG2022-1.7"],
+  };
+
+  const csv = buildTactileWorklistCsv({ pages: [page] });
+  const lines = csv.trim().split("\n");
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /^1,,3,figure,graph,,그래프·도식은 촉도 제작을 우선한다\.,TG2022-1\.7,아니오\(제안값\),/);
+});
+
+test("a table marked as not-a-table is exported as an omitted image", () => {
+  const page = samplePage(9);
+  page.semantic_analyses[1].braille_review = { visual_treatment: "omit" };
+
+  const text = buildBrailleEditText({ pages: [page] });
+  const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+  assert.doesNotMatch(text, /\[표\]/);
+  assert.match(text, /,'그림 생략,'/);
+  assert.doesNotMatch(html, /<table>/);
+});
+
+test("exports drop invisible PDF control characters", () => {
+  const page = samplePage(3, "⑴ \u200c\u0007자동차의 속력을 구하시오.");
+  const text = buildBrailleEditText({ pages: [page] });
+  assert.match(text, /⑴ 자동차의 속력을 구하시오\./);
 });
