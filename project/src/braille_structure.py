@@ -20,6 +20,7 @@ _QUESTION_MARKER = re.compile(r"^\s*(?:[⑴-⒇]|\(\d{1,2}\))")
 # show up as stray marks in the review UI and as stray braille cells.
 _INVISIBLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u2060\ufeff]")
 _FIGURE_LABEL = re.compile(r"^\[?\s*(?:그림|표|그래프)\s*\d+")
+_BRACKET_CAPTION = re.compile(r"^[<〈《].{1,25}[>〉》]$")
 _PAGE_LINE = re.compile(r"^\d{1,4}\s+\S.{0,38}$|^.{1,38}\S\s+\d{1,4}$")
 _CAPTION_MAX_CHARS = 30
 _MIN_COLUMN_CHARS = 8
@@ -35,6 +36,7 @@ def apply_braille_structure(
     read_region: Callable[[Sequence[float]], str] | None = None,
 ) -> Dict[str, Any]:
     blocks = sorted(page.get("blocks", []), key=lambda b: b.get("reading_order", 0))
+    types_before = {b.get("block_id"): b.get("type") for b in blocks}
     for block in blocks:
         if isinstance(block.get("text"), str):
             block["text"] = _INVISIBLE.sub("", block["text"])
@@ -55,7 +57,48 @@ def apply_braille_structure(
     for order, block in enumerate(blocks, start=1):
         block["reading_order"] = order
     page["blocks"] = blocks
+    page["structure_changes"] = _describe_changes(blocks, types_before)
     return page
+
+
+def _describe_changes(blocks: Sequence[Mapping[str, Any]], types_before: Mapping[Any, Any]) -> List[Dict[str, Any]]:
+    """What this module changed, in the reviewer's words, so automatic edits
+    are visible and checkable in the review UI rather than silent."""
+    changes: List[Dict[str, Any]] = []
+
+    def add(kind: str, block: Mapping[str, Any], message: str) -> None:
+        changes.append({"kind": kind, "block_id": block.get("block_id"), "message": message})
+
+    original = sorted(blocks, key=lambda b: b.get("original_reading_order", 0))
+    for block in blocks:
+        text = re.sub(r"\s+", " ", str(block.get("text") or "")).strip()
+        short = text if len(text) <= 20 else text[:20] + "…"
+        detector = block.get("detector")
+        if detector == "braille_caption_rule" and block.get("type") == "caption":
+            add("caption", block, f'캡션 "{short}"을 본문에서 떼어 그림에 연결했습니다.')
+        elif block.get("role") == "figure_source":
+            add("source", block, f'출처 "{short}"를 그림 묶음 끝으로 옮겼습니다.')
+        elif detector == "braille_badge_rule":
+            add("badge", block, f"여백의 배지를 유형어 {text}(으)로 바꿨습니다.")
+        elif str(block.get("block_id") or "").endswith("_r"):
+            add("columns", block, "나란히 놓인 두 단을 나눠 왼쪽 단 다음에 오른쪽 단을 읽게 했습니다.")
+        if types_before.get(block.get("block_id")) == "paragraph" and block.get("type") == "footer":
+            add("footer", block, f'"{short}"을 쪽 정보(원본 쪽수)로 바꿨습니다.')
+        if block.get("type") in {"figure"} or block.get("role") == "sidebar":
+            if _preceding_id(original, block) != _preceding_id(blocks, block):
+                if block.get("role") == "sidebar":
+                    add("moved", block, f'날개 "{short}"를 문제의 물음 뒤로 옮겼습니다.')
+                else:
+                    add("moved", block, "물음 사이에 있던 그림을 물음 앞으로 옮겼습니다.")
+    return changes
+
+
+def _preceding_id(ordered: Sequence[Mapping[str, Any]], block: Mapping[str, Any]) -> Any:
+    index = next(i for i, b in enumerate(ordered) if b is block)
+    for candidate in reversed(ordered[:index]):
+        if candidate.get("type") not in {"caption", "figure"} and candidate.get("role") != "sidebar":
+            return candidate.get("block_id")
+    return None
 
 
 def _split_two_column_blocks(
@@ -170,6 +213,15 @@ def _extract_figure_captions(
                 figure = max(above, key=lambda f: _bbox(f)[3])
                 sources[figure["block_id"]] = {"text": text, "line_box": list(line_box)}
             continue
+        inside_box = _block_at(blocks, line_box)
+        # Layout boxes often include the caption line at the figure's bottom.
+        if (
+            inside_box is not None and inside_box.get("type") == "figure"
+            and _BRACKET_CAPTION.match(text) and inside_box["block_id"] not in captions
+            and line_box[1] >= _bbox(inside_box)[1] + 0.75 * (_bbox(inside_box)[3] - _bbox(inside_box)[1])
+        ):
+            captions[inside_box["block_id"]] = {"text": text, "line_box": list(line_box)}
+            continue
         below = [
             f for f in figures
             if _bbox(f)[3] - gap / 5 <= line_box[1] <= _bbox(f)[3] + gap
@@ -178,8 +230,8 @@ def _extract_figure_captions(
         ]
         if not below:
             continue
-        # An axis label of the next figure, a footer or a heading is not a caption.
         container = _block_at(blocks, line_box)
+        # An axis label of the next figure, a footer or a heading is not a caption.
         if container is not None and container.get("type") in {"figure", "footer", "page_number", "title", "section_title"}:
             continue
         container_text = re.sub(r"\s+", " ", str((container or {}).get("text") or "")).strip()
@@ -195,7 +247,10 @@ def _extract_figure_captions(
             # A caption is a complete unit, not the first line of a wrapped
             # paragraph or sidebar ("대관람차는 바퀴 모양 / 의 둘레에 ...").
             # ponytail: captions without a period (e.g. "그래프 ①") are missed.
-            if not (_FIGURE_LABEL.match(segment) or segment.endswith(("다.", ".")) or container_text == segment):
+            if not (
+                _FIGURE_LABEL.match(segment) or _BRACKET_CAPTION.match(segment)
+                or segment.endswith(("다.", ".")) or container_text == segment
+            ):
                 continue
             captions[figure["block_id"]] = {"text": segment, "line_box": list(line_box)}
 

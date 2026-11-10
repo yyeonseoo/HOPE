@@ -27,6 +27,11 @@ class SuggestVisualTreatmentTests(unittest.TestCase):
         self.assertEqual(result["suggested_visual_treatment"], "omit")
         self.assertIn("TG2022-1.8", result["treatment_rationale"])
 
+    def test_photo_with_many_numbers_is_treated_as_a_chart(self):
+        texts = ["연도별 수입", "24,757", "15,497", "15,333", "2012년 2013년"]
+        result = suggest_visual_treatment("photo", figure_texts=texts)
+        self.assertEqual(result["suggested_visual_treatment"], "tactile_graphic")
+
     def test_photo_and_unknown_fall_back_to_transcriber_note(self):
         self.assertEqual(suggest_visual_treatment("photo")["suggested_visual_treatment"], "transcriber_note")
         self.assertEqual(suggest_visual_treatment(None)["suggested_visual_treatment"], "transcriber_note")

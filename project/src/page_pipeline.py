@@ -50,6 +50,11 @@ def _promote_vector_tables(page_result: Dict, pdf_path: Path, page_number: int, 
         if cells:
             block["type"] = "table"
             block["vector_cells"] = cells
+            page_result.setdefault("structure_changes", []).append({
+                "kind": "table",
+                "block_id": block.get("block_id"),
+                "message": "그림으로 인식된 학습지형 표를 PDF의 칸 정보로 표로 복원했습니다.",
+            })
             rows = max(cell["row"] for cell in cells) + 1
             block["text"] = "\n".join(
                 " | ".join(cell["text"] or "==" for cell in cells if cell["row"] == row) for row in range(rows)

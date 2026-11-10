@@ -24,6 +24,7 @@ _PICTURE_TYPES = {"photo", "illustration"}
 # Badges and icons measured 0.33% of the page in the audit pages; the
 # smallest real graph was 1.6%. Calibration knob for other textbooks.
 _ICON_AREA_RATIO = 0.005
+_NUMBER = re.compile(r"\d")
 # "오른쪽 그림은 … 대관람차이다": the body names what the picture shows.
 _BODY_NAMES_PICTURE = re.compile(r"(?:오른쪽|왼쪽|위|아래|다음)\s*(?:그림|사진)은\s*[^.]{0,40}이다")
 # Imperative endings used by Korean textbook questions ("구하시오", "그려 보자").
@@ -34,6 +35,7 @@ def suggest_visual_treatment(
     figure_type: str | None,
     nearby_texts: Iterable[str] = (),
     area_ratio: float | None = None,
+    figure_texts: Iterable[str] = (),
 ) -> dict[str, Any]:
     figure_type = figure_type or "unknown"
     near_question = any(_QUESTION_PATTERN.search(text or "") for text in nearby_texts)
@@ -50,6 +52,13 @@ def suggest_visual_treatment(
                 ["TG2022-1.6", "TG2022-7.3"],
             )
         return _suggestion("tactile_graphic", "그래프·도식은 촉도 제작을 우선한다.", ["TG2022-1.7"])
+    if figure_type in _PICTURE_TYPES and sum(bool(_NUMBER.search(t or "")) for t in figure_texts) >= 3:
+        # e.g. a bar chart of yearly revenue classified as a photo.
+        return _suggestion(
+            "tactile_graphic",
+            "그림 안에 수치가 여러 개 있어 그래프로 보고 촉도를 우선한다.",
+            ["TG2022-1.7"],
+        )
     if figure_type in _PICTURE_TYPES:
         # TG2022 §1.8 Q1: the body already says what the picture shows.
         if any(_BODY_NAMES_PICTURE.search(text or "") for text in nearby_texts):

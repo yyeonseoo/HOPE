@@ -215,7 +215,10 @@ function pageDescriptionHtml(result, pageId) {
 function sourcePageLabel(blocks) {
   for (const block of blocks) {
     if (block?.type !== "footer" && block?.type !== "page_number") continue;
-    const match = blockText(block).match(/(?:^|\s)(\d{1,4})(?=\s|$)/);
+    // "1. 좌표평면과 그래프 127" (number last) or OCR'd "42I수와경제생활" /
+    // "102ⅢII함수와경제" (number first, no space); "1." is a section number.
+    const text = blockText(block);
+    const match = text.match(/(?:^|\D)(\d{1,4})\s*$/) || text.match(/^(\d{1,4})(?![.\d])/);
     if (match) return match[1];
   }
   return null;

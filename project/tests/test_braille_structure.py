@@ -148,6 +148,18 @@ class ApplyBrailleStructureTests(unittest.TestCase):
         )
         self.assertEqual(blocks[3]["context"], {"role_hint": "problem"})
 
+    def test_bracket_caption_inside_the_figure_box_is_pulled_out(self):
+        page = {"page_id": 98, "blocks": [block("graph", "figure", [476, 496, 647, 694], order=1)]}
+        lines = [
+            {"bbox": [480, 600, 520, 615], "text": "4"},
+            {"bbox": [520, 670, 600, 690], "text": "〈한계효용곡선〉"},
+        ]
+
+        blocks = apply_braille_structure(page, lines, dpi=120)["blocks"]
+
+        self.assertEqual([(b["type"], b["text"]) for b in blocks], [("figure", ""), ("caption", "〈한계효용곡선〉")])
+        self.assertEqual(blocks[0]["caption_block_id"], blocks[1]["block_id"])
+
     def test_margin_note_is_read_after_the_problem_questions(self):
         page = {"page_id": 6, "blocks": [
             block("stem", "paragraph", [290, 191, 583, 317], "오른쪽 그림은 대관람차이다. 다음 물음에 답하시오.", 1),
@@ -174,6 +186,8 @@ class ApplyBrailleStructureTests(unittest.TestCase):
         blocks = apply_braille_structure(page, [], dpi=120)["blocks"]
 
         self.assertEqual([b["block_id"] for b in blocks], ["stem", "fig", "q1", "q2", "q3"])
+        changes = page["structure_changes"]
+        self.assertEqual([(c["kind"], c["block_id"]) for c in changes], [("moved", "fig")])
         self.assertEqual([b["reading_order"] for b in blocks], [1, 2, 3, 4, 5])
         self.assertEqual([b["original_reading_order"] for b in blocks], [1, 4, 2, 3, 5])
 

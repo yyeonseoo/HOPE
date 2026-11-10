@@ -289,3 +289,12 @@ test("exports drop invisible PDF control characters", () => {
   const text = buildBrailleEditText({ pages: [page] });
   assert.match(text, /⑴ 자동차의 속력을 구하시오\./);
 });
+
+test("reads printed page numbers from OCR'd footers without spaces", () => {
+  for (const [footer, expected] of [["42I수와경제생활", "42"], ["102ⅢII함수와경제", "102"], ["1. 좌표평면과 그래프 127", "127"]]) {
+    const page = samplePage(3);
+    page.page.blocks.push({ block_id: "footer", type: "footer", text: footer });
+    const html = buildAccessibleTextbookHtml({ title: "교과서", pages: [page] });
+    assert.match(html, new RegExp(`\[원본 쪽 ${expected}\]`));
+  }
+});

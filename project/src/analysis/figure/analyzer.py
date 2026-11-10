@@ -212,9 +212,11 @@ def _run_context_aware_pipeline(
     figure_type = prediction.route
     # Decide the braille treatment before generating: it picks the output
     # format, and an omitted figure needs no model call at all.
-    braille_review = suggest_visual_treatment(figure_type, nearby_texts, area_ratio)
-    treatment = braille_review["suggested_visual_treatment"]
     evidence = _figure_text_evidence(ocr_lines, bbox)
+    braille_review = suggest_visual_treatment(
+        figure_type, nearby_texts, area_ratio, [item["text"] for item in evidence],
+    )
+    treatment = braille_review["suggested_visual_treatment"]
     type_signals = extract_type_signals(figure_type, evidence, _graph_visual_cue(figure_type, crop_path))
     prompt_result = _prompt_builder.build(figure_type, figure_context, type_signals, treatment=treatment)
     if treatment == "omit":
