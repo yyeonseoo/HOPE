@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
+from braille_structure import apply_braille_structure
 from export_json import build_page_result
 from layout_detection import detect_layout, refine_blocks_after_ocr
 from main import visualize_blocks
@@ -10,6 +11,49 @@ from ocr import _load_paddleocr, ocr_blocks, ocr_image
 from pdf_text import extract_pdf_text_lines
 from pdf_to_image import render_pdf_page
 from reading_order import sort_reading_order
+from vector_table import read_vector_table
+
+
+_MARGIN_OCR_ENGINES: Dict[str, object] = {}
+
+
+def _margin_reader(pdf_path: Path, page_number: int, dpi: int, ocr_engine, lang: str):
+    """OCR a small page region at 300 dpi; badges are image text the PDF
+    text layer does not have. The OCR engine is loaded only when first used."""
+    import tempfile
+
+    import fitz
+
+    def read(box) -> str:
+        scale = 72 / dpi
+        rect = fitz.Rect(*[max(0.0, v * scale) for v in box])
+        with fitz.open(pdf_path) as document:
+            pixmap = document[page_number - 1].get_pixmap(dpi=300, clip=rect)
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "region.png"
+            pixmap.save(str(image_path))
+            engine = ocr_engine or _MARGIN_OCR_ENGINES.get(lang)
+            if engine is None:
+                engine = _MARGIN_OCR_ENGINES[lang] = _load_paddleocr(lang=lang)
+            return " ".join(line.get("text", "") for line in ocr_image(image_path, ocr_engine=engine, lang=lang))
+
+    return read
+
+
+def _promote_vector_tables(page_result: Dict, pdf_path: Path, page_number: int, dpi: int) -> None:
+    """A figure that is really a worksheet table becomes a table block, with
+    its cells read from the PDF (see vector_table.py)."""
+    for block in page_result.get("blocks", []):
+        if block.get("type") != "figure" or not block.get("bbox"):
+            continue
+        cells = read_vector_table(pdf_path, page_number, block["bbox"], dpi)
+        if cells:
+            block["type"] = "table"
+            block["vector_cells"] = cells
+            rows = max(cell["row"] for cell in cells) + 1
+            block["text"] = "\n".join(
+                " | ".join(cell["text"] or "==" for cell in cells if cell["row"] == row) for row in range(rows)
+            )
 
 
 def process_single_page(
@@ -46,6 +90,12 @@ def process_single_page(
         blocks = refine_blocks_after_ocr(blocks, ocr_lines=ocr_lines, correction_profile=correction_profile)
     blocks = sort_reading_order(blocks)
     page_result = build_page_result(page_number, blocks)
+    if not model_only:
+        page_result = apply_braille_structure(
+            page_result, ocr_lines, dpi,
+            read_region=_margin_reader(pdf_path, page_number, dpi, ocr_engine, lang),
+        )
+        _promote_vector_tables(page_result, pdf_path, page_number, dpi)
     visualize_blocks(page_image_path, blocks, visualization_path)
 
     return {

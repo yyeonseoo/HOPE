@@ -14,3 +14,5 @@ uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 jsonschema>=4.22.0
 python-dotenv>=1.0.0
+kiwipiepy>=0.21.0
+braillify>=2.2.0

@@ -91,6 +91,39 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("12", result["draft_text"])
 
+    def test_every_figure_keeps_a_line_so_the_ui_pairs_lines_with_blocks(self):
+        page_result = {
+            "page_id": 6,
+            "blocks": [
+                {"block_id": "badge", "type": "figure", "reading_order": 0},
+                {"block_id": "photo", "type": "figure", "reading_order": 1},
+            ],
+        }
+        analyses = [
+            {"block_id": "badge", "braille_review": {"suggested_visual_treatment": "omit"}},
+            {"block_id": "photo", "description": {"long_text": "대관람차 사진이다."}},
+        ]
+
+        result = build_page_description(page_result, analyses)
+
+        self.assertEqual(result["draft_text"], "[figure] (그림 생략)\n[figure] 대관람차 사진이다.")
+        self.assertEqual(result["warnings"], [])
+
+    def test_formula_uses_original_latex_over_paraphrase(self):
+        page_result = {
+            "page_id": 21,
+            "blocks": [{"block_id": "p21_b1", "type": "formula", "text": "y=ax", "reading_order": 0}],
+        }
+        analyses = [{
+            "block_id": "p21_b1",
+            "analysis": {"result": {"latex": "y=ax"}},
+            "description": {"long_text": "y는 a 곱하기 x이다. 정비례 관계를 나타낸다."},
+        }]
+
+        result = build_page_description(page_result, analyses)
+
+        self.assertEqual(result["draft_text"], "[formula] y=ax")
+
     def test_bare_page_number_footer_is_excluded(self):
         page_result = {
             "page_id": 20,
@@ -193,15 +226,16 @@ class BuildPageDescriptionDraftTests(unittest.TestCase):
         self.assertIn("y=2x", result["draft_text"])
         self.assertEqual(result["warnings"], [])
 
-    def test_figure_without_description_is_omitted_with_warning(self):
+    def test_figure_without_description_keeps_a_placeholder_and_warns(self):
         page_result, semantic_analyses = _mixed_page()
         semantic_analyses[2]["description"] = {"long_text": None, "short_text": None}
 
         result = build_page_description(page_result, semantic_analyses)
 
         self.assertEqual(result["status"], "partial")
-        self.assertNotIn("p1_b5", result["block_ids"])
-        self.assertTrue(any("figure" in warning for warning in result["warnings"]))
+        self.assertIn("p1_b5", result["block_ids"])
+        self.assertIn("[figure] (그림 설명 없음)", result["draft_text"])
+        self.assertTrue(any("p1_b5" in warning for warning in result["warnings"]))
 
     def test_empty_page_is_failed(self):
         result = build_page_description({"page_id": 2, "blocks": []}, [])

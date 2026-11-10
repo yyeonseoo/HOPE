@@ -60,7 +60,8 @@ def _nullable_text(value: Any) -> str | None:
 def _resolve_block_text(
     block: Mapping[str, Any], analyses_by_id: Mapping[str, Mapping[str, Any]]
 ) -> tuple[str | None, str | None]:
-    """Return (text, skip_reason); skip_reason is only set when text is None."""
+    """Return (text, warning); a figure missing its description still gets a
+    placeholder text together with the warning."""
     block_type = block.get("type")
     block_id = block.get("block_id")
 
@@ -68,6 +69,11 @@ def _resolve_block_text(
         return _nullable_text(block.get("text")), None
 
     record = analyses_by_id.get(str(block_id))
+    # Braille editions transcribe the formula itself, not a paraphrase of it.
+    if block_type == "formula":
+        latex = _nullable_text((((record or {}).get("analysis") or {}).get("result") or {}).get("latex"))
+        if latex:
+            return latex, None
     description = (record or {}).get("description") or {}
     text = _nullable_text(description.get("long_text")) or _nullable_text(description.get("short_text"))
     if text:
@@ -77,6 +83,16 @@ def _resolve_block_text(
         raw_text = _nullable_text(block.get("text"))
         if raw_text:
             return raw_text, None
+
+    # The review UI pairs the n-th "[figure]" line with the n-th figure block,
+    # so every figure needs a line even without a description (e.g. one whose
+    # suggested treatment is omit and was never sent to the model).
+    if block_type == "figure":
+        review = (record or {}).get("braille_review") or {}
+        treatment = review.get("visual_treatment") or review.get("suggested_visual_treatment")
+        if treatment == "omit":
+            return "(그림 생략)", None
+        return "(그림 설명 없음)", f"그림 {block_id}에 점역자 주로 쓸 설명이 없습니다. 직접 작성하거나 처리 방식을 바꾸세요."
 
     return None, f"{block_type} block {block_id!r} has no usable description or text; omitted from page description."
 
@@ -137,9 +153,9 @@ def _build_draft(
     for block in blocks:
         block_type = block.get("type")
         text, skip_reason = _resolve_block_text(block, analyses_by_id)
+        if skip_reason:
+            warnings.append(skip_reason)
         if not text:
-            if skip_reason:
-                warnings.append(skip_reason)
             continue
         text = _collapse_whitespace(text)
         if not text:
