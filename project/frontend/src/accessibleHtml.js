@@ -434,6 +434,10 @@ function forEachExportBlock(pages, visit) {
 export function buildBrailleEditText({ pages }) {
   const lines = [];
   const used = { omit: false, tactile: false, moved: false };
+  // Type word from a margin badge, e.g. "(의사소통)". Braille puts it between
+  // the item number and the item text: "2 (의사소통) 오른쪽 그래프는 …"
+  // (NLD2022 3장 3절).
+  let typeWord = null;
   forEachExportBlock(pages, (item) => {
     if (item.kind === "page") {
       const { printedPage, pdfPage } = item.pageInfo;
@@ -446,6 +450,14 @@ export function buildBrailleEditText({ pages }) {
     // ponytail: a wrap inside a word becomes a stray space ("만 드시오").
     const text = blockText(block).replace(/\s+/g, " ");
     if (block.type === "page_number" || block.type === "footer") return;
+    if (block.detector === "braille_badge_rule") {
+      typeWord = text;
+      return;
+    }
+    if (typeWord && !(block.type === "paragraph" && text)) {
+      lines.push(typeWord);
+      typeWord = null;
+    }
     // Chapter tab marker (a lone "Ⅲ"), dropped the same way page_description.py does.
     if (block.type === "title" && /^[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]$/.test(text)) return;
     if (block.type === "title") lines.push(`[제목] ${text}`);
@@ -463,7 +475,11 @@ export function buildBrailleEditText({ pages }) {
       else if (treatment === "tactile_graphic") lines.push(`[촉도 ${tactileIndex}]`);
       else lines.push(`,'${descriptionText(analysis) || "그림 설명 필요"},'`);
     } else if (block.role === "sidebar" && text) lines.push(`[날개] ${text}`);
-    else if (text) lines.push(text);
+    else if (text && typeWord) {
+      const numbered = text.match(/^(\d{1,2})\s+(.*)$/);
+      lines.push(numbered ? `${numbered[1]} ${typeWord} ${numbered[2]}` : `${typeWord} ${text}`);
+      typeWord = null;
+    } else if (text) lines.push(text);
   });
   // Book-level transcriber's notes: state each convention once instead of
   // at every figure (\nD2022 2장 1절 4.).

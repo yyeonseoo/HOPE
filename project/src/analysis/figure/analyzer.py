@@ -155,7 +155,8 @@ def analyze_figure_block(
     if "braille_review" not in record:
         result = normalized["analysis"].get("result") or {}
         record["braille_review"] = suggest_visual_treatment(
-            record.get("figure_type") or result.get("figure_type"), nearby_texts, area_ratio
+            record.get("figure_type") or result.get("figure_type"), nearby_texts, area_ratio,
+            [item["text"] for item in _figure_text_evidence(ocr_lines, bbox)],
         )
     return record
 

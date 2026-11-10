@@ -298,3 +298,15 @@ test("reads printed page numbers from OCR'd footers without spaces", () => {
     assert.match(html, new RegExp(`\[원본 쪽 ${expected}\]`));
   }
 });
+
+test("puts the badge type word between the item number and the item text", () => {
+  const page = samplePage(3);
+  page.page.blocks = [
+    { block_id: "b", type: "section_title", text: "(의사소통)", detector: "braille_badge_rule", reading_order: 1 },
+    { block_id: "p", type: "paragraph", text: "2 오른쪽 그래프는 거리의 변화를 나타낸 것이다.", reading_order: 2 },
+  ];
+  page.semantic_analyses = [];
+  const text = buildBrailleEditText({ pages: [page] });
+  assert.match(text, /^2 \(의사소통\) 오른쪽 그래프는/m);
+  assert.doesNotMatch(text, /\[소제목\] \(의사소통\)/);
+});

@@ -240,3 +240,14 @@ test("an unreadable table suggested for omission is a decision to confirm", () =
   assert.deepEqual(items.map((item) => item.kind), ["treatment"]);
   assert.match(items[0].message, /"생략"을 제안/);
 });
+
+test("flags traces of a figure the layout model missed", () => {
+  const items = brailleReadingWarnings({
+    blocks: [
+      { block_id: "ticks", type: "section_title", text: "3588", reading_order: 1 },
+      { block_id: "cap", type: "section_title", text: "3 6소비량 4 5 <총효용곡선>", reading_order: 2 },
+      { block_id: "body", type: "paragraph", text: "위의 표로부터 그래프를 그려 보면 다음과 같다.", reading_order: 3 },
+    ],
+  }, []);
+  assert.deepEqual(items.map((item) => `${item.blockId}:${item.kind}`), ["ticks:missing_figure", "cap:missing_figure"]);
+});

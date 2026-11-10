@@ -389,6 +389,24 @@ export function brailleReadingWarnings(page, analyses = []) {
       }
     });
 
+  // Traces of a figure the layout model missed: a block that is only axis
+  // numbers ("3588") or a bracketed caption ("<총효용곡선>") left over.
+  blocks
+    .filter((block) => block.type !== "figure" && block.type !== "caption" && block.type !== "table")
+    .forEach((block) => {
+      const text = String(block.text || "").replace(/\s+/g, "");
+      const digits = (text.match(/\d/g) || []).length;
+      const axisFragment = text.length > 0 && text.length <= 30 && digits / text.length >= 0.6;
+      const strayCaption = /[<〈《][^<>〈〉《》]{1,25}[>〉》]$/.test(text);
+      if (axisFragment || strayCaption) {
+        items.push({
+          blockId: block.block_id,
+          kind: "missing_figure",
+          message: "그림이 검출되지 않았을 수 있습니다. 원본을 보고 필요하면 '그림 추가'로 넣으세요.",
+        });
+      }
+    });
+
   const { linkedCaptionIds } = linkedFigureCaptions(blocks, analyses);
   blocks
     .filter((block) => block.type === "caption" && !linkedCaptionIds.has(block.block_id))

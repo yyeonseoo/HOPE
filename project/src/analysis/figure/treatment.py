@@ -51,6 +51,13 @@ def suggest_visual_treatment(
                 "문제 그림은 설명하면 답이 드러나므로 촉도로 제작한다.",
                 ["TG2022-1.6", "TG2022-7.3"],
             )
+        if not any(str(t or "").strip() for t in figure_texts):
+            # A large decorative icon is easily classified as a diagram.
+            return _suggestion(
+                "tactile_graphic",
+                "그래프·도식은 촉도 제작을 우선한다. 다만 그림 안에 글자·눈금이 없어 장식일 수도 있으니 확인한다.",
+                ["TG2022-1.7"],
+            )
         return _suggestion("tactile_graphic", "그래프·도식은 촉도 제작을 우선한다.", ["TG2022-1.7"])
     if figure_type in _PICTURE_TYPES and sum(bool(_NUMBER.search(t or "")) for t in figure_texts) >= 3:
         # e.g. a bar chart of yearly revenue classified as a photo.
