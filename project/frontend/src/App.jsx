@@ -1129,6 +1129,7 @@ function LinkedPageDescription({
       return (
         <div key={block.block_id || index} {...rowProps}>
           {moveHandle}
+          <div className="description-row-content">
           <span className="block-type-chip">{blockTypeLabel(type)}</span>
           <span className="page-description-line">
             {tableOmitted ? <strong className="omitted-label">(그림 생략) 표시만 남김</strong> : taggedMatch[2]}
@@ -1143,6 +1144,7 @@ function LinkedPageDescription({
             <span aria-hidden="true">{tableOmitted ? "↩" : "⊘"}</span>
             {tableOmitted ? "표로 되돌리기" : "표 아님·생략"}
           </button>
+          </div>
         </div>
       );
     }
@@ -1151,8 +1153,10 @@ function LinkedPageDescription({
       return (
         <div key={block.block_id || index} {...rowProps}>
           {moveHandle}
-          <span className="block-type-chip">{block.role === "sidebar" ? "날개" : blockTypeLabel(type)}</span>
-          <span className="page-description-line">{taggedMatch[2]}</span>
+          <div className="description-row-content">
+            <span className="block-type-chip">{block.role === "sidebar" ? "날개" : blockTypeLabel(type)}</span>
+            <span className="page-description-line">{taggedMatch[2]}</span>
+          </div>
         </div>
       );
     }

@@ -7554,3 +7554,23 @@ select:focus {
 .structure-changes > button {
   margin-top: 8px;
 }
+
+/* Label and text share the row's content cell: "본문  이제 그래프가 …" */
+.description-row-content {
+  line-height: 1.9;
+  min-width: 0;
+}
+
+.description-row-content .block-type-chip {
+  display: inline-block;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.description-row-content .page-description-line {
+  display: inline;
+}
+
+.description-row-content .inline-visual-treatment-toggle {
+  margin-left: 8px;
+}
