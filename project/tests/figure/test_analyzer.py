@@ -302,6 +302,23 @@ class ContextAwarePipelineTests(unittest.TestCase):
         self.assertEqual(engine.captioner.calls, [])
         self.assertEqual(list(self.validator.iter_errors(result)), [])
 
+    def test_numbers_the_second_generation_disagrees_on_are_marked(self):
+        class TwoAnswers(FakePromptCaptioner):
+            def __init__(self):
+                super().__init__()
+                self.answers = ["가로축 눈금은 30, 180이다.", "가로축 눈금은 30, 200이다."]
+
+            def caption_with_prompt(self, image_path, prompt, evidence=None):
+                self.text = self.answers[min(len(self.calls), 1)]
+                return super().caption_with_prompt(image_path, prompt, evidence)
+
+        engine = ContextAwareEngineDouble(captioner=TwoAnswers())
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_figure_blocks(self.page, self._page_image(tmp), engine=engine)[0]
+
+        self.assertEqual(result["description"]["long_text"], "가로축 눈금은 30, 180[불일치]이다.")
+        self.assertEqual(len(engine.captioner.calls), 2)
+
     def test_legacy_engine_without_captioner_attribute_is_unaffected(self):
         # Same fake as the pre-existing FakeChartEngine tests above: no
         # `.classifier`/`.captioner`, so this must keep using the old

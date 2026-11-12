@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -14,7 +15,12 @@ from .grounding import TopicGroundingScorer, compute_grounding_scores
 from .normalize import build_figure_analysis
 from .postprocess import build_context_aware_figure_record, split_additive_fields
 from .prompt_builder import FigurePromptBuilder
-from .treatment import suggest_visual_treatment
+from .treatment import (
+    combine_with_decision_tree,
+    decision_tree_prompt,
+    parse_decision_answers,
+    suggest_visual_treatment,
+)
 from .type_signals import GRAPH_FIGURE_TYPES, TypeSignals, extract_type_signals
 
 # Nearest `window_size` paragraphs before/after the figure, not just the
@@ -161,6 +167,62 @@ def analyze_figure_block(
     return record
 
 
+_SELF_CHECK_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
+_DISAGREE = "[불일치]"
+
+
+def _self_check(captioner: Any, crop_path: str, prompt: str, evidence: Any, first: GeneratedDescription) -> GeneratedDescription:
+    """Generate the description a second time and mark numbers that only the
+    first answer has: where the model disagrees with itself, the reviewer
+    should look first. HOPE_FIGURE_SELF_CHECK=0 turns it off."""
+    import dataclasses
+    import os
+
+    if os.getenv("HOPE_FIGURE_SELF_CHECK", "1") == "0" or not first.text:
+        return first
+    try:
+        second = _description_generator.generate(captioner, crop_path, prompt, evidence=evidence)
+    except Exception:  # the first answer still stands
+        return first
+    if not second.text:
+        return first
+    other = set(_SELF_CHECK_NUMBER.findall(second.text))
+    disputed: list[str] = []
+
+    def mark(match: re.Match) -> str:
+        value = match.group(0)
+        tail = first.text[match.end():match.end() + len("[확인 필요]")]
+        if value in other or value in disputed or tail.startswith("["):
+            return value
+        disputed.append(value)
+        return value + _DISAGREE
+
+    text = _SELF_CHECK_NUMBER.sub(mark, first.text)
+    warnings = list(first.warnings)
+    if disputed:
+        warnings.append("Second generation disagreed on: " + ", ".join(disputed))
+    return dataclasses.replace(first, text=text, warnings=warnings)
+
+
+def _apply_decision_tree(captioner: Any, crop_path: str, nearby_texts: Sequence[str], rule: dict[str, Any]) -> dict[str, Any]:
+    """Ask the TG2022 §1.8 questions unless a certain rule already decided.
+    HOPE_TRIAGE_MODE=rules turns the extra model call off."""
+    import os
+
+    if os.getenv("HOPE_TRIAGE_MODE", "hybrid") == "rules" or rule.get("rule_is_strong"):
+        return dict(rule, rule_suggestion=rule["suggested_visual_treatment"])
+    ask = getattr(captioner, "ask_raw", None)
+    if not callable(ask):
+        return dict(rule, rule_suggestion=rule["suggested_visual_treatment"])
+    try:
+        text, usage = ask(crop_path, decision_tree_prompt(nearby_texts))
+    except Exception as exc:  # the rule suggestion still stands
+        return dict(rule, rule_suggestion=rule["suggested_visual_treatment"], decision_tree_error=str(exc))
+    combined = combine_with_decision_tree(rule, parse_decision_answers(text))
+    combined["decision_tree_usage"] = usage
+    return combined
+
+
 def _page_area_ratio(bbox: Any, page_image_path: str | Path | None) -> float | None:
     if not page_image_path or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
@@ -217,6 +279,7 @@ def _run_context_aware_pipeline(
     braille_review = suggest_visual_treatment(
         figure_type, nearby_texts, area_ratio, [item["text"] for item in evidence],
     )
+    braille_review = _apply_decision_tree(engine.captioner, crop_path, nearby_texts, braille_review)
     treatment = braille_review["suggested_visual_treatment"]
     type_signals = extract_type_signals(figure_type, evidence, _graph_visual_cue(figure_type, crop_path))
     prompt_result = _prompt_builder.build(figure_type, figure_context, type_signals, treatment=treatment)
@@ -233,6 +296,7 @@ def _run_context_aware_pipeline(
         description = _description_generator.generate(
             engine.captioner, crop_path, prompt_result.prompt, evidence=evidence
         )
+        description = _self_check(engine.captioner, crop_path, prompt_result.prompt, evidence, description)
     grounding_scorer = getattr(engine, "grounding_scorer", None) or TopicGroundingScorer()
     grounding_scores = compute_grounding_scores(description.text, figure_context, grounding_scorer)
     classifier_model = {

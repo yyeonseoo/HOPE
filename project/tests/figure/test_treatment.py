@@ -1,6 +1,16 @@
 import unittest
 
-from src.analysis.figure.treatment import suggest_visual_treatment
+from src.analysis.figure.treatment import (
+    combine_with_decision_tree,
+    parse_decision_answers,
+    suggest_visual_treatment,
+    treatment_from_answers,
+)
+
+
+def answers(**flags):
+    keys = ["q1_text_repeats", "q2_words_better", "q3_needs_sight", "q4_hard_to_touch", "q5_needed_for_task"]
+    return {key: {"answer": "예" if flags.get(key) else "아니오", "reason": "이유"} for key in keys}
 
 
 class SuggestVisualTreatmentTests(unittest.TestCase):
@@ -35,6 +45,34 @@ class SuggestVisualTreatmentTests(unittest.TestCase):
     def test_photo_and_unknown_fall_back_to_transcriber_note(self):
         self.assertEqual(suggest_visual_treatment("photo")["suggested_visual_treatment"], "transcriber_note")
         self.assertEqual(suggest_visual_treatment(None)["suggested_visual_treatment"], "transcriber_note")
+
+
+class DecisionTreeTests(unittest.TestCase):
+    def test_walks_the_guideline_questions_in_order(self):
+        self.assertEqual(treatment_from_answers(answers(q1_text_repeats=True, q5_needed_for_task=True))["treatment"], "omit")
+        self.assertEqual(treatment_from_answers(answers())["treatment"], "omit")  # not needed for the task
+        self.assertEqual(treatment_from_answers(answers(q2_words_better=True, q5_needed_for_task=True))["treatment"], "transcriber_note")
+        self.assertEqual(treatment_from_answers(answers(q5_needed_for_task=True))["treatment"], "tactile_graphic")
+
+    def test_incomplete_answers_give_no_decision(self):
+        self.assertIsNone(treatment_from_answers({"q1_text_repeats": {"answer": "예"}}))
+
+    def test_parses_json_inside_model_text(self):
+        parsed = parse_decision_answers('답변: {"q1_text_repeats": {"answer": "아니오", "reason": "x"}} 끝')
+        self.assertEqual(parsed["q1_text_repeats"]["answer"], "아니오")
+        self.assertIsNone(parse_decision_answers("JSON 없음"))
+
+    def test_tree_decides_unless_a_certain_rule_applies(self):
+        rule = suggest_visual_treatment("photo")
+        combined = combine_with_decision_tree(rule, answers(q5_needed_for_task=True))
+        self.assertEqual(combined["suggested_visual_treatment"], "tactile_graphic")
+        self.assertEqual(combined["rule_suggestion"], "transcriber_note")
+        self.assertEqual(len(combined["decision_tree"]), 5)
+
+        strong = suggest_visual_treatment("graph", ["거리를 구하시오."])
+        kept = combine_with_decision_tree(strong, answers(q2_words_better=True, q5_needed_for_task=True))
+        self.assertEqual(kept["suggested_visual_treatment"], "tactile_graphic")
+        self.assertEqual(kept["tree_suggestion"], "transcriber_note")
 
 
 if __name__ == "__main__":

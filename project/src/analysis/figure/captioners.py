@@ -164,6 +164,13 @@ class ChatGPTCaptioner:
             api_usage=api_usage,
         )
 
+    def ask_raw(self, image_path: str | Path, prompt: str) -> tuple[str, dict[str, Any]]:
+        """One image+prompt call returning the model's text untouched (no
+        caption post-processing), e.g. for structured JSON answers."""
+        client = self._load_client()
+        response = client.chat.completions.create(**self._build_request(prompt, _image_data_url(image_path)))
+        return (response.choices[0].message.content or "").strip(), _openai_usage(response, self.model_name)
+
     def _build_request(self, prompt: str, image_data_url: str) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.model_name,
