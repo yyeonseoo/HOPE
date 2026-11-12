@@ -17,6 +17,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
+try:
+    from textbook_profile import load_profile
+except ImportError:  # imported as src.vector_table
+    from src.textbook_profile import load_profile
+
+_PROFILE = load_profile()
+
 _MIN_COLUMNS = 3
 
 
@@ -43,7 +50,9 @@ def read_vector_table(pdf_path: str | Path, page_number: int, bbox: Sequence[flo
 
 # Hancom equation symbol fonts store symbols under Latin codes: "…" is "y"
 # in EHyak. ponytail: only the glyph seen so far; add others as they appear.
-_SYMBOL_FONT_GLYPHS = {("EHyak", "y"): "…"}
+_SYMBOL_FONT_GLYPHS = {
+    (item["font_prefix"], item["code"]): item["glyph"] for item in _PROFILE["symbol_font_glyphs"]
+}
 
 
 def _symbol_text(font: str, text: str) -> str:

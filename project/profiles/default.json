@@ -1,0 +1,19 @@
+{
+  "description": "Textbook-specific values for braille structure and treatment rules. Tuned on '3단원 좌표평면과 그래프 2.pdf' (2015 개정 경제수학). Copy this file and point HOPE_TEXTBOOK_PROFILE at the copy for another textbook.",
+  "badges": {
+    "함께풀기": {"label": "함께 풀기", "role": "example"},
+    "문제해결": {"label": "문제 해결", "role": "problem"},
+    "의사소통": {"label": "의사소통", "role": "problem"},
+    "개념짚기": {"label": "개념 짚기", "role": null},
+    "생각열기": {"label": "생각 열기", "role": null},
+    "활동하기": {"label": "활동하기", "role": null},
+    "확인하기": {"label": "확인하기", "role": "problem"}
+  },
+  "icon_area_ratio": 0.005,
+  "caption_gap_inch": 0.25,
+  "caption_max_chars": 30,
+  "min_column_chars": 8,
+  "symbol_font_glyphs": [
+    {"font_prefix": "EHyak", "code": "y", "glyph": "…"}
+  ]
+}

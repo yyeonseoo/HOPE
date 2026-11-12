@@ -15,6 +15,13 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Mapping, Sequence
 
+try:
+    from textbook_profile import load_profile
+except ImportError:  # imported as src.braille_structure
+    from src.textbook_profile import load_profile
+
+_PROFILE = load_profile()
+
 _QUESTION_MARKER = re.compile(r"^\s*(?:[⑴-⒇]|\(\d{1,2}\))")
 # Zero-width and control characters from the PDF text layer (U+200C, U+0007 after "⑴")
 # show up as stray marks in the review UI and as stray braille cells.
@@ -22,11 +29,11 @@ _INVISIBLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u2060\ufeff]"
 _FIGURE_LABEL = re.compile(r"^\[?\s*(?:그림|표|그래프)\s*\d+")
 _BRACKET_CAPTION = re.compile(r"^[<〈《].{1,25}[>〉》]$")
 _PAGE_LINE = re.compile(r"^\d{1,4}\s+\S.{0,38}$|^.{1,38}\S\s+\d{1,4}$")
-_CAPTION_MAX_CHARS = 30
-_MIN_COLUMN_CHARS = 8
+_CAPTION_MAX_CHARS = _PROFILE["caption_max_chars"]
+_MIN_COLUMN_CHARS = _PROFILE["min_column_chars"]
 # ponytail: caption search band below the figure is a fixed 0.25 inch; tune
 # per textbook if captions sit further away or above figures.
-_CAPTION_GAP_INCH = 0.25
+_CAPTION_GAP_INCH = _PROFILE["caption_gap_inch"]
 
 
 def apply_braille_structure(
@@ -343,15 +350,7 @@ def _keep_figures_out_of_question_runs(blocks: List[Dict[str, Any]]) -> List[Dic
 # Activity badges are image text in the margin ("함께 풀기 4", "6 문제 해결").
 # Braille keeps the type word in parentheses before the item (NLD2022 3장 3절).
 # ponytail: dictionary of this textbook's badges; extend it per textbook.
-_BADGES = {
-    "함께풀기": ("함께 풀기", "example"),
-    "문제해결": ("문제 해결", "problem"),
-    "의사소통": ("의사소통", "problem"),
-    "개념짚기": ("개념 짚기", None),
-    "생각열기": ("생각 열기", None),
-    "활동하기": ("활동하기", None),
-    "확인하기": ("확인하기", "problem"),
-}
+_BADGES = {key: (value["label"], value["role"]) for key, value in _PROFILE["badges"].items()}
 
 
 def _badge_titles(

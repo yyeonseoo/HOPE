@@ -1,0 +1,19 @@
+{
+  "description": "Reference braille treatments for the figures of '3단원 좌표평면과 그래프 2.pdf' PDF pages 3, 6, 9, 10, drafted from the guidelines (reports/HOPE 점역 지침 대조 평가.md, 4.5). Not yet reviewed by a braille transcriber.",
+  "split": "dev",
+  "note": "dev = the pages the layout and treatment rules were developed on. Report these numbers as development results, not held-out accuracy.",
+  "acceptable": {
+    "p3_b2": ["tactile_graphic"],
+    "p3_b5": ["tactile_graphic"],
+    "p3_b14": ["tactile_graphic"],
+    "p6_b4": ["omit", "transcriber_note"],
+    "p6_b8": ["tactile_graphic"],
+    "p6_b14": ["omit", "transcriber_note"],
+    "p6_b18": ["tactile_graphic"],
+    "p10_b2": ["tactile_graphic", "omit"],
+    "p10_b3": ["tactile_graphic"],
+    "p10_b7": ["tactile_graphic"],
+    "p10_b14": ["tactile_graphic"],
+    "p10_b15": ["tactile_graphic"]
+  }
+}
