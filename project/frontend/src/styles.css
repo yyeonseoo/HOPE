@@ -7574,3 +7574,66 @@ select:focus {
 .description-row-content .inline-visual-treatment-toggle {
   margin-left: 8px;
 }
+
+.decision-tree {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.decision-tree summary {
+  color: #5a6b62;
+  cursor: pointer;
+}
+
+.decision-tree ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.decision-tree .answer-yes {
+  color: #2f6b4a;
+}
+
+.decision-tree .answer-no {
+  color: #8a5a2b;
+}
+
+.decision-tree-disagree {
+  color: #9a3b2a;
+  margin: 4px 0 0;
+}
+
+.saved-pages-exports {
+  align-items: center;
+  border-bottom: 1px solid #e4e9e1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 32px;
+}
+
+.saved-pages-exports > span {
+  color: #4f5f56;
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.saved-pages-exports button {
+  background: white;
+  border: 1px solid #cdd8d1;
+  border-radius: 8px;
+  color: #2f4a3b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.saved-pages-exports button.primary-export {
+  background: #2f6b4a;
+  border-color: #2f6b4a;
+  color: white;
+  font-weight: 700;
+}

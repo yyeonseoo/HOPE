@@ -356,12 +356,12 @@ export function brailleReadingWarnings(page, analyses = []) {
           message: "원본과 다른 위치로 옮겨져 원래 위치를 알리는 점역자 주가 붙습니다. 문구를 확인하세요.",
         });
       }
-      const unverified = (description.match(/\[확인 필요\]/g) || []).length;
+      const unverified = (description.match(/\[(?:확인 필요|불일치)\]/g) || []).length;
       if (treatment !== "omit" && unverified) {
         items.push({
           blockId: block.block_id,
           kind: "verify",
-          message: `원본과 대조할 값이 ${unverified}개 있습니다([확인 필요]).`,
+          message: `원본과 대조할 값이 ${unverified}개 있습니다([확인 필요]: 근거 없음, [불일치]: AI 두 답이 다름).`,
         });
       }
     });

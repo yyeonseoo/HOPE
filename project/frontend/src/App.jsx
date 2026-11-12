@@ -1206,6 +1206,26 @@ function LinkedPageDescription({
                 제안: {suggestionReason}
               </span>
             )}
+            {figureAnalysis?.braille_review?.decision_tree?.length > 0 && (
+              <details className="decision-tree">
+                <summary>판단 근거 (지침 5문항, TG2022 §1.8)</summary>
+                <ol>
+                  {figureAnalysis.braille_review.decision_tree.map((item) => (
+                    <li key={item.id}>
+                      <span>{item.question}</span>{" "}
+                      <strong className={item.answer.startsWith("예") ? "answer-yes" : "answer-no"}>{item.answer}</strong>
+                      {item.reason && <small> · {item.reason}</small>}
+                    </li>
+                  ))}
+                </ol>
+                {figureAnalysis.braille_review.rule_suggestion
+                  && figureAnalysis.braille_review.rule_suggestion !== figureAnalysis.braille_review.tree_suggestion && (
+                  <p className="decision-tree-disagree">
+                    규칙과 5문항 판단이 다릅니다. 원본을 보고 직접 고르세요.
+                  </p>
+                )}
+              </details>
+            )}
           </div>
           <div className="figure-description-content">
             <span className="figure-description-copy">
@@ -3211,6 +3231,31 @@ export default function App() {
               </div>
               <button type="button" className="dialog-close" aria-label="닫기" onClick={() => setSavedPagesDialogOpen(false)}>×</button>
             </header>
+            {/* The sidebar saved-pages card is hidden in the current layout, so
+                the textbook-level exports live here. */}
+            {savedPages.length > 0 && (
+              <div className="saved-pages-exports" aria-label="교과서 내보내기">
+                <span>교과서 전체 내보내기 ({savedPages.length}개 페이지)</span>
+                <button
+                  type="button"
+                  className="primary-export"
+                  onClick={downloadBrailleExports}
+                  title="점역 편집용 텍스트(.txt), 촉도 작업 목록(.csv), 자동 점자 초안(검수용 .txt)을 함께 내려받습니다"
+                >
+                  점역 자료 다운로드
+                </button>
+                <button type="button" onClick={downloadTextbookHtml} title="학생용 접근성 HTML 한 파일">
+                  접근성 HTML
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadReviewLog}
+                  title="검수자가 AI 제안을 수용·변경한 기록과 페이지별 요약(JSON)"
+                >
+                  검수 기록
+                </button>
+              </div>
+            )}
             <div className="saved-pages-toolbar">
               <label>
                 <span aria-hidden="true">⌕</span>

@@ -46,6 +46,18 @@ export function buildReviewLogExport({ title, pages }) {
       .map((result) => ({
         page: result.page.page_id,
         summary: pageSummary(result),
+        // Per-block suggestions next to the reviewer's final choice: the
+        // reviewer's choices double as labels for evaluating the triage
+        // (eval/evaluate_treatments.py).
+        decisions: (result.semantic_analyses || [])
+          .filter((analysis) => analysis?.braille_review?.suggested_visual_treatment)
+          .map((analysis) => ({
+            block_id: analysis.block_id,
+            rule: analysis.braille_review.rule_suggestion || null,
+            tree: analysis.braille_review.tree_suggestion || null,
+            suggested: analysis.braille_review.suggested_visual_treatment,
+            reviewer: analysis.braille_review.visual_treatment || null,
+          })),
         log: result.review_log || [],
       })),
   };

@@ -40,4 +40,9 @@ test("summarizes how a reviewer used the AI suggestions", () => {
     actions: 4,
   });
   assert.equal(exported.log.length, 4);
+  assert.deepEqual(exported.decisions.map((d) => [d.block_id, d.suggested, d.reviewer]), [
+    ["a", "tactile_graphic", "tactile_graphic"],
+    ["b", "omit", "transcriber_note"],
+    ["c", "transcriber_note", null],
+  ]);
 });
